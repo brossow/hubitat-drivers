@@ -1,0 +1,36 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - '*/v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract driver directory from tag
+        id: tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          DRIVER="${TAG%%/v*}"
+          echo "driver=$DRIVER" >> $GITHUB_OUTPUT
+
+      - name: Extract release notes from manifest
+        id: manifest
+        run: |
+          NOTES=$(jq -r '.releaseNotes' "${{ steps.tag.outputs.driver }}/packageManifest.json")
+          echo "notes=$NOTES" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "${{ steps.manifest.outputs.notes }}" > release_notes.txt
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }} — ${{ steps.manifest.outputs.notes }}" \
+            --notes-file release_notes.txt

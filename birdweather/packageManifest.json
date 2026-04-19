@@ -1,0 +1,21 @@
+{
+  "packageName": "BirdWeather PUC",
+  "minimumHEVersion": "2.2.8",
+  "author": "Brent Rossow",
+  "version": "1.1.0",
+  "dateReleased": "2026-04-17",
+  "releaseNotes": "Adds todaySpeciesList attribute, night mode polling option, and automatic retry on transient API errors.",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/birdweather",
+  "communityLink": "https://community.hubitat.com/t/release-birdweather-puc-driver/163303",
+  "apps": [],
+  "drivers": [
+    {
+      "id": "16ea4e31-70a2-4ba1-a7cf-498ded5a69f8",
+      "name": "BirdWeather PUC",
+      "namespace": "community",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/birdweather/birdweather-puc.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    }
+  ]
+}

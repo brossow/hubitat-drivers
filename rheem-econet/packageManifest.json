@@ -1,0 +1,29 @@
+{
+  "packageName": "Rheem EcoNet",
+  "minimumHEVersion": "2.2.8",
+  "author": "brossow",
+  "version": "0.1.2",
+  "dateReleased": "2026-04-17",
+  "releaseNotes": "Fix fan mode control on devices that expose @FANSPEED but not @FANMODE.",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/rheem-econet",
+  "communityLink": "https://community.hubitat.com/t/drivers-rheem-econet-thermostat-water-heater/163127",
+  "apps": [],
+  "drivers": [
+    {
+      "id": "27d38842-c75c-4668-840d-d0d9a8e1961a",
+      "name": "Rheem EcoNet Thermostat",
+      "namespace": "community",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/EcoNetThermostat.groovy",
+      "required": false,
+      "primaryType": "Driver"
+    },
+    {
+      "id": "eeee6d79-39d3-41d6-9b9a-a491a502be9b",
+      "name": "Rheem EcoNet Water Heater",
+      "namespace": "community",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/EcoNetWaterHeater.groovy",
+      "required": false,
+      "primaryType": "Driver"
+    }
+  ]
+}

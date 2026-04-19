@@ -1,0 +1,22 @@
+{
+  "packageName": "Xiaomi/Aqara Temperature & Humidity Sensor",
+  "minimumHEVersion": "2.2.6",
+  "author": "Brent Rossow",
+  "version": "1.2.0",
+  "dateReleased": "2026-04-18",
+  "releaseNotes": "Community fork of Markus Liljergren's archived oh-lalabs driver. Bug fixes: critical hasPressure logic bug (all models showed pressure UI), lumi.sens not normalized on refresh, hasPressure not updated via parse(), Keen fingerprint wrong manufacturer, pressure preference mislabeled, temperature bounds hardcoded. Improvements: batteryVoltage attribute, battery % clamped to [0,100], configurable temp/humidity reporting thresholds, pressure sanity bounds, ~1100 lines of dead code removed.",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara",
+  "communityLink": "",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/LICENSE",
+  "apps": [],
+  "drivers": [
+    {
+      "id": "fb617f88-8840-4b3d-a383-de4559c2e837",
+      "name": "Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor",
+      "namespace": "community",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/zigbee-xiaomi-aqara-temperature-humidity.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    }
+  ]
+}

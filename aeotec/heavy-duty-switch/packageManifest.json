@@ -5,16 +5,16 @@
   "version": "1.2.0",
   "dateReleased": "2026-04-18",
   "releaseNotes": "Bug fixes and modernization of Sebastian YEPES' original driver: fixed undefined variable in firmware version reporting, corrected state-check schedule hour labels, fixed SwitchBinaryReport and Hail handlers that were silently dropped, changed param80 default to Basic Report so the hub receives immediate state-change notifications, removed spurious powerlevelGet() calls from poll and checkState, and modernized on/off to use SwitchBinary commands.",
-  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/aeotec",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/aeotec/heavy-duty-switch",
   "communityLink": "",
-  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/LICENSE",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/heavy-duty-switch/LICENSE",
   "apps": [],
   "drivers": [
     {
       "id": "2219f951-b195-4f65-bf33-4d822c133d11",
       "name": "Aeotec Heavy Duty Smart Switch",
       "namespace": "brossow",
-      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/aeotec-heavy-duty-switch.groovy",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/heavy-duty-switch/aeotec-heavy-duty-switch.groovy",
       "required": true,
       "primaryType": "Driver"
     }

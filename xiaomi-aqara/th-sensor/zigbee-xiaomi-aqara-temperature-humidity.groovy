@@ -16,7 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  *
- *  v1.2.0 — Community fork: https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara
+ *  v1.2.0 — Community fork: https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara/th-sensor
  *  Cleanup, dead-code removal, and improvements by Brent Rossow
  *  Original driver by Markus Liljergren (oh-lalabs.com)
  *
@@ -30,7 +30,7 @@ metadata {
         namespace: "brossow",
         author: "Markus Liljergren (community fork by Brent Rossow)",
         filename: "zigbee-xiaomi-aqara-temperature-humidity",
-        importUrl: "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/zigbee-xiaomi-aqara-temperature-humidity.groovy"
+        importUrl: "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/th-sensor/zigbee-xiaomi-aqara-temperature-humidity.groovy"
     ) {
         capability "Sensor"
         capability "PresenceSensor"
@@ -283,7 +283,7 @@ ArrayList<String> parse(String description) {
                 case "8032":
                     break
                 default:
-                    log.warn "Unhandled Zigbee event — please report at https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara — description:${description} | msgMap:${msgMap}"
+                    log.warn "Unhandled Zigbee event — please report at https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara/th-sensor — description:${description} | msgMap:${msgMap}"
             }
             break
     }
@@ -501,7 +501,7 @@ Map parseXiaomiStruct(String xiaomiStruct, boolean isFCC0=false, boolean hasLeng
             cKey = tags[cTag]
         } else {
             cKey = "unknown${cTag}${cTypeStr}"
-            log.warn("Unknown Xiaomi struct tag: 0x$cTag (type: 0x$cTypeStr) — please report at https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara (struct: $xiaomiStruct)")
+            log.warn("Unknown Xiaomi struct tag: 0x$cTag (type: 0x$cTypeStr) — please report at https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara/th-sensor (struct: $xiaomiStruct)")
         }
         ret = convertStructValue(r, values, cType, cKey, cTag)
         r = ret[0]

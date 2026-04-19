@@ -6,7 +6,7 @@
       "id": "2219f951-b195-4f65-bf33-4d822c133d11",
       "name": "Aeotec Heavy Duty Smart Switch",
       "category": "Control",
-      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/packageManifest.json",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/heavy-duty-switch/packageManifest.json",
       "description": "Maintained fork with bug fixes for the Aeotec Heavy Duty Smart Switch (ZW078) Z-Wave switch with power metering.",
       "tags": ["Z-Wave", "Energy Monitoring", "Switch"]
     },
@@ -30,7 +30,7 @@
       "id": "fb617f88-8840-4b3d-a383-de4559c2e837",
       "name": "Xiaomi/Aqara Temperature & Humidity Sensor",
       "category": "Temperature & Humidity",
-      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/packageManifest.json",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/th-sensor/packageManifest.json",
       "description": "Community fork with bug fixes for Xiaomi and Aqara Zigbee temperature and humidity sensors.",
       "tags": ["Zigbee", "Temperature & Humidity"]
     }

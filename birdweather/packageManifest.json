@@ -12,7 +12,7 @@
     {
       "id": "16ea4e31-70a2-4ba1-a7cf-498ded5a69f8",
       "name": "BirdWeather PUC",
-      "namespace": "community",
+      "namespace": "brossow",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/birdweather/birdweather-puc.groovy",
       "required": true,
       "primaryType": "Driver"

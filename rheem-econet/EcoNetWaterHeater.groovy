@@ -20,7 +20,7 @@ import groovy.transform.Field
 metadata {
     definition(
         name: "Rheem EcoNet Water Heater",
-        namespace: "community",
+        namespace: "brossow",
         author: "brossow"
     ) {
         capability "Actuator"

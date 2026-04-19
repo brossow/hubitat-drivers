@@ -32,7 +32,7 @@ private String getDriverVersion() { return "1.2.0" }
 metadata {
     definition(
         name:        "BirdWeather PUC",
-        namespace:   "community",
+        namespace: "brossow",
         author:      "Brent Rossow",
         description: "Live bird detection data from a BirdWeather PUC station"
     ) {

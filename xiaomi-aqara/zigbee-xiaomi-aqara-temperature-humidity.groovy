@@ -27,7 +27,7 @@ import hubitat.helper.HexUtils
 metadata {
     definition (
         name: "Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor",
-        namespace: "community",
+        namespace: "brossow",
         author: "Markus Liljergren (community fork by Brent Rossow)",
         filename: "zigbee-xiaomi-aqara-temperature-humidity",
         importUrl: "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/zigbee-xiaomi-aqara-temperature-humidity.groovy"

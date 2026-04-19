@@ -1,0 +1,38 @@
+{
+  "author": "brossow",
+  "gitHubUrl": "https://github.com/brossow",
+  "packages": [
+    {
+      "id": "2219f951-b195-4f65-bf33-4d822c133d11",
+      "name": "Aeotec Heavy Duty Smart Switch",
+      "category": "Control",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/packageManifest.json",
+      "description": "Maintained fork with bug fixes for the Aeotec Heavy Duty Smart Switch (ZW078) Z-Wave switch with power metering.",
+      "tags": ["Z-Wave", "Energy Monitoring", "Switch"]
+    },
+    {
+      "id": "16ea4e31-70a2-4ba1-a7cf-498ded5a69f8",
+      "name": "BirdWeather PUC",
+      "category": "Integrations",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/birdweather/packageManifest.json",
+      "description": "Live bird detection data from a BirdWeather PUC station, exposed as Hubitat device attributes and automation events.",
+      "tags": ["Pets & Animals", "Cloud", "Monitoring"]
+    },
+    {
+      "id": "978f896a-dbae-408f-858b-1bace96468a6",
+      "name": "Rheem EcoNet",
+      "category": "Integrations",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/packageManifest.json",
+      "description": "Drivers for Rheem EcoNet thermostats and water heaters via the ClearBlade cloud API.",
+      "tags": ["Cloud", "Climate Control", "Temperature & Humidity", "Water Heater"]
+    },
+    {
+      "id": "fb617f88-8840-4b3d-a383-de4559c2e837",
+      "name": "Xiaomi/Aqara Temperature & Humidity Sensor",
+      "category": "Temperature & Humidity",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/packageManifest.json",
+      "description": "Community fork with bug fixes for Xiaomi and Aqara Zigbee temperature and humidity sensors.",
+      "tags": ["Zigbee", "Temperature & Humidity"]
+    }
+  ]
+}

@@ -19,7 +19,7 @@ import groovy.transform.Field
 metadata {
     definition(
         name: "Rheem EcoNet Thermostat",
-        namespace: "community",
+        namespace: "brossow",
         author: "brossow"
     ) {
         capability "Thermostat"

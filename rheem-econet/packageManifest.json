@@ -12,7 +12,7 @@
     {
       "id": "27d38842-c75c-4668-840d-d0d9a8e1961a",
       "name": "Rheem EcoNet Thermostat",
-      "namespace": "community",
+      "namespace": "brossow",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/EcoNetThermostat.groovy",
       "required": false,
       "primaryType": "Driver"
@@ -20,7 +20,7 @@
     {
       "id": "eeee6d79-39d3-41d6-9b9a-a491a502be9b",
       "name": "Rheem EcoNet Water Heater",
-      "namespace": "community",
+      "namespace": "brossow",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/EcoNetWaterHeater.groovy",
       "required": false,
       "primaryType": "Driver"

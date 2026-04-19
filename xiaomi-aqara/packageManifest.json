@@ -13,7 +13,7 @@
     {
       "id": "fb617f88-8840-4b3d-a383-de4559c2e837",
       "name": "Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor",
-      "namespace": "community",
+      "namespace": "brossow",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/zigbee-xiaomi-aqara-temperature-humidity.groovy",
       "required": true,
       "primaryType": "Driver"

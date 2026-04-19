@@ -13,7 +13,7 @@
     {
       "id": "2219f951-b195-4f65-bf33-4d822c133d11",
       "name": "Aeotec Heavy Duty Smart Switch",
-      "namespace": "community",
+      "namespace": "brossow",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/aeotec-heavy-duty-switch.groovy",
       "required": true,
       "primaryType": "Driver"

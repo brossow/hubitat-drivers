@@ -44,10 +44,10 @@ The original driver worked for many users but had several bugs that have been co
    https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/th-sensor/zigbee-xiaomi-aqara-temperature-humidity.groovy
    ```
 3. Click **Import → Save**
-4. Open your sensor device and change the **Type** to **Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor** (namespace: community)
+4. Open your sensor device and change the **Type** to **Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor** (namespace: brossow)
 5. Click **Save Device**, then **Save Preferences**
 
-> **Migrating from the original oh-lalabs driver?** You'll need to reassign the driver type on the device page (namespace changed from `oh-lalabs.com` to `community`). All sensor history and settings are preserved.
+> **Migrating from the original oh-lalabs driver?** You'll need to reassign the driver type on the device page (namespace changed from `oh-lalabs.com` to `brossow`). All sensor history and settings are preserved.
 
 ### Via Hubitat Package Manager
 

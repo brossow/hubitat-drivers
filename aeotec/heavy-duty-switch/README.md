@@ -32,10 +32,10 @@ The original driver worked but had several bugs that have been corrected:
    https://raw.githubusercontent.com/brossow/hubitat-drivers/main/aeotec/heavy-duty-switch/aeotec-heavy-duty-switch.groovy
    ```
 3. Click **Import → Save**
-4. Open your Aeotec Heavy Duty Smart Switch device and change the **Type** to **Aeotec Heavy Duty Smart Switch** (namespace: community)
+4. Open your Aeotec Heavy Duty Smart Switch device and change the **Type** to **Aeotec Heavy Duty Smart Switch** (namespace: brossow)
 5. Click **Save Device**, then **Configure**, then **Save Preferences**
 
-> **Migrating from the original syepes driver?** You'll need to reassign the driver type on the device page (the namespace changed from `syepes` to `community`). All settings and history are preserved.
+> **Migrating from the original syepes driver?** You'll need to reassign the driver type on the device page (the namespace changed from `syepes` to `brossow`). All settings and history are preserved.
 
 ## Preferences
 

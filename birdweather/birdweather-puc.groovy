@@ -27,7 +27,7 @@
  *    "%value% (%lastSpeciesScientific%)" as the message text
  */
 
-private String getDriverVersion() { return "1.3.0" }
+private String getDriverVersion() { return "1.3.1" }
 
 metadata {
     definition(
@@ -122,6 +122,11 @@ preferences {
         title:       "Pause polling at night",
         description: "Skip polls between sunset and sunrise (birds aren't active anyway)",
         defaultValue: false
+
+    input "enableBirdDetectedEvent", "bool",
+        title:       "Fire birdDetected event on each detection",
+        description: "Disable to reduce event log noise if you're not using this trigger in automations",
+        defaultValue: true
 
     input "logEnable", "bool",
         title:       "Enable Debug Logging",
@@ -364,11 +369,13 @@ def handleDetectionsResponse(response, data) {
             debugLog "New detection: ${commonName} (${confidence}%, ${certainty})"
 
             if (passesEventFilter(certaintyRaw, latest.confidence)) {
-                sendEvent(
-                    name:            "birdDetected",
-                    value:           commonName,
-                    descriptionText: "${commonName} detected (${confidence}%, ${certainty})"
-                )
+                if (enableBirdDetectedEvent != false) {
+                    sendEvent(
+                        name:            "birdDetected",
+                        value:           commonName,
+                        descriptionText: "${commonName} detected (${confidence}%, ${certainty})"
+                    )
+                }
 
                 def seenToday = state.todaySpeciesSeen ?: []
                 if (!(commonName in seenToday)) {

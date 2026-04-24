@@ -40,8 +40,9 @@ The longer API Token shown under Advanced Settings in the BirdWeather app is onl
 | `todayDetections` | Total detection count today |
 | `topSpeciesToday` | Most-detected species today |
 | `topSpeciesCount` | Detection count for the top species |
-| `totalSpecies` | All-time unique species count |
-| `totalDetections` | All-time detection count |
+| `lifetimeSpecies` | All-time unique species count (sourced from BirdWeather API) |
+| `lifetimeDetections` | All-time total detection count (sourced from BirdWeather API) |
+| `lifetimeSpeciesList` | JSON array of all species ever detected, sorted alphabetically |
 | `birdDetected` | Trigger attribute — updates on every new detection |
 | `newSpeciesDetected` | Trigger attribute — updates when a new species is seen today |
 | `lastPollStatus` | `OK` or an error message |
@@ -65,7 +66,7 @@ The daily species list resets at midnight in your hub's time zone.
 | **Station ID** | Numeric ID from your station's URL at app.birdweather.com |
 | **API Token** | Optional — only needed for private stations |
 | **Poll Interval** | How often to check for new detections (1–30 min) |
-| **Recent Detections to Track** | Depth of the `recentDetections` JSON history (3–20) |
+| **Recent Detections to Track** | Depth of the `recentDetections` JSON history (3, 5, 10, or 20) |
 | **Minimum Confidence %** | Ignore detections below this threshold (0 = accept all) |
 | **Fire events only for certainty level ≥** | Filter `birdDetected`/`newSpeciesDetected` events by BirdWeather's certainty label |
 | **Pause polling at night** | Skip polls between sunset and sunrise |
@@ -103,6 +104,8 @@ This driver uses the [BirdWeather REST API](https://app.birdweather.com/api/v1):
 
 | Endpoint | Used for |
 |----------|----------|
-| `GET /stations/{token}/detections` | Latest detection + recent history |
-| `GET /stations/{token}/stats?period=day` | Today's species and detection counts |
-| `GET /stations/{token}/species?period=day` | Top species + all-time totals |
+| `GET /stations/{id}/detections` | Latest detection + recent history |
+| `GET /stations/{id}/stats?period=day` | Today's species and detection counts |
+| `GET /stations/{id}/species?period=day&limit=5` | Top species today |
+| `GET /stations/{id}/stats?period=all` | All-time species and detection counts |
+| `GET /stations/{id}/species?period=all&limit=500` | All-time species list |

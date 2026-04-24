@@ -27,7 +27,7 @@
  *    "%value% (%lastSpeciesScientific%)" as the message text
  */
 
-private String getDriverVersion() { return "1.2.1" }
+private String getDriverVersion() { return "1.2.2" }
 
 metadata {
     definition(
@@ -238,19 +238,37 @@ def setLifetimeDetections(count) {
 // ── Lifetime State Initialization ─────────────────────────────────────────
 // Called from both initialize() and poll() so lifetime tracking self-heals
 // if device state is wiped by the Hubitat platform without a hub reboot.
+// Recovery order: (1) attribute values, (2) today's species, (3) zero.
 
 private ensureLifetimeStateInitialized() {
     if (state.lifetimeSpeciesSeen == null) {
-        def seed = (state.todaySpeciesSeen ?: []).collect { it }
-        state.lifetimeSpeciesSeen = seed
-        if (seed) {
-            sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(seed.sort()))
-            sendEvent(name: "lifetimeSpecies",     value: seed.size())
-            log.info "BirdWeather: lifetime species state cleared — re-seeded with ${seed.size()} species from today's tracking"
+        def existing = device.currentValue("lifetimeSpeciesList")
+        if (existing && existing != "[]") {
+            try {
+                def recovered = new groovy.json.JsonSlurper().parseText(existing)
+                state.lifetimeSpeciesSeen  = recovered
+                state.lifetimeSpeciesCount = recovered.size()
+                log.info "BirdWeather: recovered ${recovered.size()} lifetime species from attribute after state wipe"
+            } catch (e) {
+                log.warn "BirdWeather: could not parse lifetimeSpeciesList attribute — falling back to today's species"
+            }
+        }
+        if (state.lifetimeSpeciesSeen == null) {
+            def seed = (state.todaySpeciesSeen ?: []).collect { it }
+            state.lifetimeSpeciesSeen = seed
+            if (seed) {
+                sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(seed.sort()))
+                sendEvent(name: "lifetimeSpecies",     value: seed.size())
+                log.info "BirdWeather: lifetime species state cleared — re-seeded with ${seed.size()} species from today's tracking"
+            }
         }
     }
-    if (state.lifetimeDetectionCount == null) state.lifetimeDetectionCount = 0
-    if (state.lifetimeSpeciesCount    == null) state.lifetimeSpeciesCount = state.lifetimeSpeciesSeen?.size() ?: 0
+    if (state.lifetimeDetectionCount == null) {
+        def existing = device.currentValue("lifetimeDetections")
+        state.lifetimeDetectionCount = existing ? existing.toLong() : 0
+        if (existing) log.info "BirdWeather: recovered lifetime detection count (${existing}) from attribute after state wipe"
+    }
+    if (state.lifetimeSpeciesCount == null) state.lifetimeSpeciesCount = state.lifetimeSpeciesSeen?.size() ?: 0
 }
 
 // ── Daily Tracking Reset ────────────────────────────────────────────────────

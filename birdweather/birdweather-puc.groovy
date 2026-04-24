@@ -27,12 +27,12 @@
  *    "%value% (%lastSpeciesScientific%)" as the message text
  */
 
-private String getDriverVersion() { return "1.2.0" }
+private String getDriverVersion() { return "1.2.1" }
 
 metadata {
     definition(
         name:        "BirdWeather PUC",
-        namespace: "brossow",
+        namespace:   "community",
         author:      "Brent Rossow",
         description: "Live bird detection data from a BirdWeather PUC station"
     ) {
@@ -154,22 +154,7 @@ def initialize() {
     }
     sendEvent(name: "driverVersion", value: driverVersion)
     schedulePolling()
-    if (state.lifetimeSpeciesSeen == null) {
-        def seed = (state.todaySpeciesSeen ?: []).collect { it }
-        state.lifetimeSpeciesSeen = seed
-        if (seed) {
-            sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(seed.sort()))
-            sendEvent(name: "lifetimeSpecies",     value: seed.size())
-            log.info "BirdWeather: seeded lifetime species list with ${seed.size()} species from today's tracking"
-        }
-    }
-    if (state.lifetimeDetectionCount == null) {
-        state.lifetimeDetectionCount = 0
-    }
-    if (state.lifetimeSpeciesCount == null) {
-        state.lifetimeSpeciesCount = state.lifetimeSpeciesSeen?.size() ?: 0
-    }
-
+    ensureLifetimeStateInitialized()
     runIn(3, refresh)
 }
 
@@ -178,6 +163,7 @@ def initialize() {
 private schedulePolling() {
     def cron = pollIntervalToCron(pollInterval ?: "5 minutes")
     schedule(cron, poll)
+    schedule("0 0 3 * * ?", initialize)  // daily watchdog at 3 AM re-registers schedule if dropped
     debugLog "Polling scheduled: every ${pollInterval} (${cron})"
 }
 
@@ -213,6 +199,7 @@ def poll() {
         }
     }
     maybeResetDailyTracking()
+    ensureLifetimeStateInitialized()
     fetchDetections()
     fetchDayStats()
     fetchTopSpecies()
@@ -246,6 +233,24 @@ def setLifetimeDetections(count) {
     state.lifetimeDetectionCount = n
     sendEvent(name: "lifetimeDetections", value: n)
     log.info "BirdWeather: lifetime detection count set to ${n}"
+}
+
+// ── Lifetime State Initialization ─────────────────────────────────────────
+// Called from both initialize() and poll() so lifetime tracking self-heals
+// if device state is wiped by the Hubitat platform without a hub reboot.
+
+private ensureLifetimeStateInitialized() {
+    if (state.lifetimeSpeciesSeen == null) {
+        def seed = (state.todaySpeciesSeen ?: []).collect { it }
+        state.lifetimeSpeciesSeen = seed
+        if (seed) {
+            sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(seed.sort()))
+            sendEvent(name: "lifetimeSpecies",     value: seed.size())
+            log.info "BirdWeather: lifetime species state cleared — re-seeded with ${seed.size()} species from today's tracking"
+        }
+    }
+    if (state.lifetimeDetectionCount == null) state.lifetimeDetectionCount = 0
+    if (state.lifetimeSpeciesCount    == null) state.lifetimeSpeciesCount = state.lifetimeSpeciesSeen?.size() ?: 0
 }
 
 // ── Daily Tracking Reset ────────────────────────────────────────────────────

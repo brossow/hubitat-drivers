@@ -27,12 +27,12 @@
  *    "%value% (%lastSpeciesScientific%)" as the message text
  */
 
-private String getDriverVersion() { return "1.2.2" }
+private String getDriverVersion() { return "1.3.0" }
 
 metadata {
     definition(
         name:        "BirdWeather PUC",
-        namespace:   "community",
+        namespace:   "brossow",
         author:      "Brent Rossow",
         description: "Live bird detection data from a BirdWeather PUC station"
     ) {
@@ -63,9 +63,9 @@ metadata {
         // ── Today's Species List ──────────────────────────────────────────
         attribute "todaySpeciesList",     "string"   // JSON array of species names seen today
 
-        // ── Lifetime Totals (driver-tracked, never resets) ───────────────
-        attribute "lifetimeSpecies",      "number"   // Unique species ever detected since driver install
-        attribute "lifetimeDetections",   "number"   // Total detections since driver install
+        // ── Lifetime Totals (API-sourced from period=all) ────────────────
+        attribute "lifetimeSpecies",      "number"   // Unique species ever detected (all time)
+        attribute "lifetimeDetections",   "number"   // Total detections (all time)
         attribute "lifetimeSpeciesList",  "string"   // JSON array of all species, sorted alphabetically
 
         // ── Automation Trigger Events (also appear in event log) ──────────
@@ -81,7 +81,6 @@ metadata {
 
         command "refresh"
         command "resetHistory"
-        command "setLifetimeDetections", [[name: "count", type: "NUMBER", description: "Set starting detection count (e.g. from BirdWeather Data Explorer)"]]
     }
 }
 
@@ -154,7 +153,6 @@ def initialize() {
     }
     sendEvent(name: "driverVersion", value: driverVersion)
     schedulePolling()
-    ensureLifetimeStateInitialized()
     runIn(3, refresh)
 }
 
@@ -199,10 +197,11 @@ def poll() {
         }
     }
     maybeResetDailyTracking()
-    ensureLifetimeStateInitialized()
     fetchDetections()
     fetchDayStats()
     fetchTopSpecies()
+    fetchAllTimeStats()
+    fetchAllTimeSpecies()
 }
 
 def retryPoll() {
@@ -226,49 +225,6 @@ def resetHistory() {
      "topSpeciesCount", "lifetimeSpecies", "lifetimeDetections"
     ].each { sendEvent(name: it, value: 0) }
     runIn(2, refresh)
-}
-
-def setLifetimeDetections(count) {
-    def n = count?.toLong() ?: 0
-    state.lifetimeDetectionCount = n
-    sendEvent(name: "lifetimeDetections", value: n)
-    log.info "BirdWeather: lifetime detection count set to ${n}"
-}
-
-// ── Lifetime State Initialization ─────────────────────────────────────────
-// Called from both initialize() and poll() so lifetime tracking self-heals
-// if device state is wiped by the Hubitat platform without a hub reboot.
-// Recovery order: (1) attribute values, (2) today's species, (3) zero.
-
-private ensureLifetimeStateInitialized() {
-    if (state.lifetimeSpeciesSeen == null) {
-        def existing = device.currentValue("lifetimeSpeciesList")
-        if (existing && existing != "[]") {
-            try {
-                def recovered = new groovy.json.JsonSlurper().parseText(existing)
-                state.lifetimeSpeciesSeen  = recovered
-                state.lifetimeSpeciesCount = recovered.size()
-                log.info "BirdWeather: recovered ${recovered.size()} lifetime species from attribute after state wipe"
-            } catch (e) {
-                log.warn "BirdWeather: could not parse lifetimeSpeciesList attribute — falling back to today's species"
-            }
-        }
-        if (state.lifetimeSpeciesSeen == null) {
-            def seed = (state.todaySpeciesSeen ?: []).collect { it }
-            state.lifetimeSpeciesSeen = seed
-            if (seed) {
-                sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(seed.sort()))
-                sendEvent(name: "lifetimeSpecies",     value: seed.size())
-                log.info "BirdWeather: lifetime species state cleared — re-seeded with ${seed.size()} species from today's tracking"
-            }
-        }
-    }
-    if (state.lifetimeDetectionCount == null) {
-        def existing = device.currentValue("lifetimeDetections")
-        state.lifetimeDetectionCount = existing ? existing.toLong() : 0
-        if (existing) log.info "BirdWeather: recovered lifetime detection count (${existing}) from attribute after state wipe"
-    }
-    if (state.lifetimeSpeciesCount == null) state.lifetimeSpeciesCount = state.lifetimeSpeciesSeen?.size() ?: 0
 }
 
 // ── Daily Tracking Reset ────────────────────────────────────────────────────
@@ -315,6 +271,18 @@ private fetchTopSpecies() {
     asynchttpGet("handleTopSpeciesResponse",
         buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/species",
                     [period: "day", limit: 5]))
+}
+
+private fetchAllTimeStats() {
+    asynchttpGet("handleAllTimeStatsResponse",
+        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/stats",
+                    [period: "all"]))
+}
+
+private fetchAllTimeSpecies() {
+    asynchttpGet("handleAllTimeSpeciesResponse",
+        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/species",
+                    [period: "all", limit: 500]))
 }
 
 // ── Response Handlers ──────────────────────────────────────────────────────
@@ -395,10 +363,6 @@ def handleDetectionsResponse(response, data) {
             state.lastDetectionId = latestId
             debugLog "New detection: ${commonName} (${confidence}%, ${certainty})"
 
-            def newLifetimeCount = (state.lifetimeDetectionCount ?: 0) + 1
-            state.lifetimeDetectionCount = newLifetimeCount
-            sendEvent(name: "lifetimeDetections", value: newLifetimeCount)
-
             if (passesEventFilter(certaintyRaw, latest.confidence)) {
                 sendEvent(
                     name:            "birdDetected",
@@ -417,17 +381,6 @@ def handleDetectionsResponse(response, data) {
                         descriptionText: "First ${commonName} today! (${sciName})"
                     )
                     log.info "BirdWeather: first ${commonName} today — ${seenToday.size()} species so far"
-                }
-
-                def seenLifetime = state.lifetimeSpeciesSeen ?: []
-                if (!(commonName in seenLifetime)) {
-                    seenLifetime << commonName
-                    state.lifetimeSpeciesSeen = seenLifetime
-                    def newCount = (state.lifetimeSpeciesCount ?: 0) + 1
-                    state.lifetimeSpeciesCount = newCount
-                    sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(seenLifetime.sort()))
-                    sendEvent(name: "lifetimeSpecies",     value: newCount)
-                    log.info "BirdWeather: new lifetime species — ${commonName} (${newCount} total)"
                 }
             } else {
                 debugLog "Event suppressed by certainty filter: ${certainty}"
@@ -485,6 +438,47 @@ def handleTopSpeciesResponse(response, data) {
 
     } catch (Exception e) {
         log.error "BirdWeather: error parsing top species — ${e.message}"
+    }
+}
+
+def handleAllTimeStatsResponse(response, data) {
+    if (response.hasError()) {
+        log.warn "BirdWeather: all-time stats API returned HTTP ${response.status} — skipping"
+        return
+    }
+    try {
+        def json = response.json
+        if (json?.success == false) {
+            log.warn "BirdWeather: all-time stats API returned success=false"
+            return
+        }
+        if (json?.detections != null) sendEvent(name: "lifetimeDetections", value: json.detections)
+        if (json?.species    != null) sendEvent(name: "lifetimeSpecies",     value: json.species)
+        debugLog "All-time stats: ${json?.species} species, ${json?.detections} detections"
+    } catch (Exception e) {
+        log.error "BirdWeather: error parsing all-time stats — ${e.message}"
+    }
+}
+
+def handleAllTimeSpeciesResponse(response, data) {
+    if (response.hasError()) {
+        debugLog "All-time species API returned HTTP ${response.status} — skipping"
+        return
+    }
+    try {
+        def json        = response.json
+        def speciesList = json?.species
+        if (speciesList == null) return
+
+        def names = speciesList
+            .collect { sp -> sp?.commonName ?: sp?.common_name ?: "" }
+            .findAll { it }
+            .sort()
+
+        sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(names))
+        debugLog "All-time species list: ${names.size()} species"
+    } catch (Exception e) {
+        log.error "BirdWeather: error parsing all-time species — ${e.message}"
     }
 }
 

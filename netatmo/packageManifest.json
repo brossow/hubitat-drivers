@@ -1,0 +1,64 @@
+{
+  "packageName": "Netatmo Weather Station Connect",
+  "minimumHEVersion": "2.2.8",
+  "author": "Brent Rossow",
+  "version": "0.1.0",
+  "dateReleased": "2026-04-25",
+  "releaseNotes": "Initial development/public preview release with OAuth authentication, station and module discovery, child devices for supported Netatmo Weather Station modules, scheduled polling, field diagnostics, app-level unit preferences, and measurement timestamp support.",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/netatmo",
+  "communityLink": "",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/LICENSE",
+  "apps": [
+    {
+      "id": "ce68ed2f-8743-478f-a194-7768c7b7ac3a",
+      "name": "Netatmo Weather Station Connect",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/NetatmoWeatherStationConnect.groovy",
+      "required": true,
+      "oauth": true,
+      "primaryType": "App"
+    }
+  ],
+  "drivers": [
+    {
+      "id": "cb249b98-6654-4555-a340-10d91b94a828",
+      "name": "Netatmo Weather Base Station",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/NetatmoWeatherBaseStation.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    },
+    {
+      "id": "75c6e764-43a8-49f7-a783-b5a59f04074c",
+      "name": "Netatmo Weather Outdoor Module",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/NetatmoWeatherOutdoorModule.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    },
+    {
+      "id": "b487307f-1a50-4fe6-9a82-c9c01480fa40",
+      "name": "Netatmo Weather Indoor Module",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/NetatmoWeatherIndoorModule.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    },
+    {
+      "id": "8a455a38-5109-4ee3-9f5e-00367e47d6d3",
+      "name": "Netatmo Weather Rain Gauge",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/NetatmoWeatherRainGauge.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    },
+    {
+      "id": "bdc39e77-fa55-4500-8eef-0480e976228d",
+      "name": "Netatmo Weather Wind Gauge",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/NetatmoWeatherWindGauge.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.1.0
+ * Version: 0.2.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -33,7 +33,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.1.0" }
+private String appVersion() { return "0.2.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -105,6 +105,11 @@ def mainPage() {
                 input name: "inspectAvailableFields",
                     type: "button",
                     title: "Inspect available fields"
+                if (state.lastFieldDiagnostic) {
+                    input name: "clearFieldDiagnostic",
+                        type: "button",
+                        title: "Clear field diagnostics"
+                }
             } else {
                 paragraph "Authorize Netatmo before running the API diagnostic."
             }
@@ -189,9 +194,20 @@ def mainPage() {
                 options: [
                     "kmh": "km/h",
                     "mph": "mph",
-                    "ms": "m/s"
+                    "ms": "m/s",
+                    "kn": "knots"
                 ],
                 defaultValue: defaultWindUnitPreference(),
+                required: true
+            input name: "windDirectionDisplayPreference",
+                type: "enum",
+                title: "Wind direction",
+                options: [
+                    "angle": "Numeric angle",
+                    "cardinal": "Text direction",
+                    "both": "Angle and text direction"
+                ],
+                defaultValue: "both",
                 required: true
             paragraph "Unit preferences are applied by the parent app before child devices are updated."
         }
@@ -203,6 +219,11 @@ def mainPage() {
                 options: pollIntervalOptions(),
                 defaultValue: "5",
                 required: true
+            if (state.netatmoAuthenticated) {
+                input name: "runPollNow",
+                    type: "button",
+                    title: "Run poll now"
+            }
             paragraph pollStatusText()
         }
 
@@ -229,6 +250,11 @@ def appButtonHandler(String buttonName) {
         return
     }
 
+    if (buttonName == "clearFieldDiagnostic") {
+        clearFieldDiagnostic()
+        return
+    }
+
     if (buttonName == "refreshDiscovery") {
         runStationDiscovery()
         return
@@ -236,6 +262,11 @@ def appButtonHandler(String buttonName) {
 
     if (buttonName == "syncSupportedDevices") {
         syncSelectedSupportedDevices()
+        return
+    }
+
+    if (buttonName == "runPollNow") {
+        poll()
         return
     }
 
@@ -294,11 +325,12 @@ String pollStatusText() {
     String configured = interval == "Disabled" ? "Polling is disabled." : "Polling every ${interval} minute(s)."
     if (state.lastPollStatus) {
         String timestamp = state.lastPollAt ? " Last poll ${formatTimestamp(state.lastPollAt)}." : ""
+        String scheduled = !state.lastPollAt && state.pollScheduledAt ? " Scheduled ${formatTimestamp(state.pollScheduledAt)}." : ""
         String message = state.lastPollMessage ? " ${state.lastPollMessage}" : ""
-        return "${configured} Last status: ${state.lastPollStatus}.${message}${timestamp}"
+        return "${configured} Last status: ${state.lastPollStatus}.${message}${timestamp}${scheduled}"
     }
 
-    return "${configured} No scheduled poll has run yet."
+    return interval == "Disabled" ? configured : "${configured} Waiting for Hubitat to schedule the first poll. Click Done after changing the interval."
 }
 
 Map pollIntervalOptions() {
@@ -578,6 +610,13 @@ void runFieldDiagnostic() {
     Integer deviceCount = state.lastFieldDiagnostic?.devices instanceof List ? state.lastFieldDiagnostic.devices.size() : 0
     state.lastDiagnosticStatus = "Field diagnostic captured ${deviceCount} discovered device(s)."
     log.info "Netatmo field diagnostic captured ${deviceCount} discovered device(s)"
+}
+
+void clearFieldDiagnostic() {
+    state.remove("lastFieldDiagnostic")
+    state.remove("lastFieldDiagnosticAt")
+    state.lastDiagnosticStatus = "Field diagnostic cleared."
+    log.info "Netatmo field diagnostic cleared"
 }
 
 void runStationDiscovery() {
@@ -916,6 +955,10 @@ private Map normalizeDeviceEntry(Map source, String stationId, String moduleId, 
 private Map normalizeDashboard(Map dashboard) {
     return [
         temperature: convertTemperature(numberValue(dashboard.Temperature)),
+        minTemperature: convertTemperature(numberValue(dashboard.min_temp)),
+        maxTemperature: convertTemperature(numberValue(dashboard.max_temp)),
+        minTemperatureTime: safeEpochSecondsAsString(dashboard.date_min_temp),
+        maxTemperatureTime: safeEpochSecondsAsString(dashboard.date_max_temp),
         humidity: numberValue(dashboard.Humidity),
         pressure: convertPressure(numberValue(dashboard.Pressure)),
         co2: numberValue(dashboard.CO2),
@@ -925,10 +968,13 @@ private Map normalizeDashboard(Map dashboard) {
         rainToday: convertRain(numberValue(dashboard.sum_rain_24)),
         windStrength: convertWind(numberValue(dashboard.WindStrength)),
         windAngle: numberValue(dashboard.WindAngle),
+        windDirection: windDirectionDisplay(numberValue(dashboard.WindAngle)),
         gustStrength: convertWind(numberValue(dashboard.GustStrength)),
         gustAngle: numberValue(dashboard.GustAngle),
+        gustDirection: windDirectionDisplay(numberValue(dashboard.GustAngle)),
         maxWindStrength: convertWind(numberValue(dashboard.max_wind_str)),
         maxWindAngle: numberValue(dashboard.max_wind_angle),
+        maxWindDirection: windDirectionDisplay(numberValue(dashboard.max_wind_angle)),
         dateMaxWindStrength: safeEpochSecondsAsString(dashboard.date_max_wind_str),
         tempTrend: stringValue(dashboard.temp_trend),
         pressureTrend: stringValue(dashboard.pressure_trend)
@@ -961,7 +1007,7 @@ private String unitPreferenceSummaryText() {
     Map units = currentUnitLabels()
     String tempPreference = settings.temperatureUnitPreference ?: "location"
     String tempText = tempPreference == "location" ? "Hubitat location default (${units.temperature})" : units.temperature
-    return "temperature ${tempText}; pressure ${units.pressure}; rain ${units.rain}; wind ${units.wind}"
+    return "temperature ${tempText}; pressure ${units.pressure}; rain ${units.rain}; wind ${units.wind}; wind direction ${windDirectionPreferenceLabel()}"
 }
 
 private String effectiveTemperatureUnitPreference() {
@@ -983,7 +1029,7 @@ private String effectiveRainUnitPreference() {
 
 private String effectiveWindUnitPreference() {
     String preference = settings.windUnitPreference
-    return preference in ["kmh", "mph", "ms"] ? preference : defaultWindUnitPreference()
+    return preference in ["kmh", "mph", "ms", "kn"] ? preference : defaultWindUnitPreference()
 }
 
 private String defaultWindUnitPreference() {
@@ -996,6 +1042,8 @@ private String windUnitLabel(String unitPreference) {
             return "mph"
         case "ms":
             return "m/s"
+        case "kn":
+            return "kn"
         default:
             return "km/h"
     }
@@ -1049,7 +1097,62 @@ private BigDecimal convertWind(BigDecimal kmhValue) {
     if (unitPreference == "ms") {
         return roundNumber(kmhValue * new BigDecimal("0.2777777778"), 1)
     }
+    if (unitPreference == "kn") {
+        return roundNumber(kmhValue * new BigDecimal("0.539956803"), 1)
+    }
     return roundNumber(kmhValue, 1)
+}
+
+private String effectiveWindDirectionDisplayPreference() {
+    String preference = settings.windDirectionDisplayPreference ?: "both"
+    return preference in ["angle", "cardinal", "both"] ? preference : "both"
+}
+
+private String windDirectionPreferenceLabel() {
+    switch (effectiveWindDirectionDisplayPreference()) {
+        case "angle":
+            return "numeric angle"
+        case "cardinal":
+            return "text direction"
+        default:
+            return "angle and text direction"
+    }
+}
+
+private String windDirectionDisplay(BigDecimal angleValue) {
+    if (angleValue == null) {
+        return null
+    }
+
+    String angleText = "${formatAngleValue(angleValue)}°"
+    String cardinal = windCardinalDirection(angleValue)
+    switch (effectiveWindDirectionDisplayPreference()) {
+        case "angle":
+            return angleText
+        case "cardinal":
+            return cardinal
+        default:
+            return "${angleText} ${cardinal}"
+    }
+}
+
+private String windCardinalDirection(BigDecimal angleValue) {
+    if (angleValue == null) {
+        return null
+    }
+
+    List labels = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    BigDecimal normalized = angleValue.remainder(new BigDecimal("360"))
+    if (normalized < BigDecimal.ZERO) {
+        normalized += new BigDecimal("360")
+    }
+    Integer index = ((normalized + new BigDecimal("11.25")) / new BigDecimal("22.5")).setScale(0, BigDecimal.ROUND_FLOOR) as Integer
+    return labels[index % 16]
+}
+
+private String formatAngleValue(BigDecimal angleValue) {
+    BigDecimal rounded = roundNumber(angleValue, 1)
+    return rounded.stripTrailingZeros().toPlainString()
 }
 
 private BigDecimal roundNumber(BigDecimal value, Integer scale) {
@@ -1141,15 +1244,15 @@ private Map diagnosticForRawDevice(Map rawDevice, Map normalized, String station
 private Map expectedFieldsForDeviceClass(String deviceClass) {
     switch (deviceClass) {
         case "base":
-            return [dashboard: ["temperature", "humidity", "pressure", "co2", "noise", "tempTrend", "pressureTrend"], metadata: ["wifiStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "pressure", "co2", "noise", "tempTrend", "pressureTrend"], metadata: ["wifiStatus"]]
         case "outdoor":
-            return [dashboard: ["temperature", "humidity", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
         case "indoor":
-            return [dashboard: ["temperature", "humidity", "co2", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "co2", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
         case "rain":
             return [dashboard: ["rain", "rainLastHour", "rainToday"], metadata: ["batteryPercent", "rfStatus"]]
         case "wind":
-            return [dashboard: ["windStrength", "windAngle", "gustStrength", "gustAngle", "maxWindStrength", "maxWindAngle", "dateMaxWindStrength"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["windStrength", "windAngle", "windDirection", "gustStrength", "gustAngle", "gustDirection", "maxWindStrength", "maxWindAngle", "maxWindDirection", "dateMaxWindStrength"], metadata: ["batteryPercent", "rfStatus"]]
         default:
             return [dashboard: [], metadata: []]
     }
@@ -1163,6 +1266,8 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
     List values = []
     Map unitByField = [
         temperature: units.temperature,
+        minTemperature: units.temperature,
+        maxTemperature: units.temperature,
         pressure: units.pressure,
         rain: units.rain,
         rainLastHour: units.rain,
@@ -1415,6 +1520,7 @@ private String callbackUrl() {
 private void schedulePolling() {
     String interval = settings.pollIntervalMinutes ?: "5"
     if (interval == "Disabled") {
+        state.remove("pollScheduledAt")
         state.lastPollStatus = state.lastPollStatus ?: "Disabled"
         state.lastPollMessage = "Scheduled polling is disabled."
         debugLog "Netatmo scheduled polling disabled"
@@ -1440,14 +1546,21 @@ private void schedulePolling() {
                 break
             default:
                 log.warn "Unsupported Netatmo poll interval ${interval}; scheduled polling disabled"
+                state.remove("pollScheduledAt")
                 state.lastPollStatus = "Disabled"
                 state.lastPollMessage = "Unsupported poll interval ${interval}."
                 return
+        }
+        state.pollScheduledAt = now()
+        if (!state.lastPollAt) {
+            state.lastPollStatus = "Scheduled"
+            state.lastPollMessage = "Waiting for first scheduled poll."
         }
         debugLog "Netatmo scheduled polling every ${interval} minute(s)"
     } catch (Exception e) {
         log.error "Failed to schedule Netatmo polling: ${exceptionSummary(e)}"
         debugLog "Netatmo polling schedule exception details: ${e}"
+        state.remove("pollScheduledAt")
         state.lastPollStatus = "Error"
         state.lastPollMessage = "Failed to schedule polling."
     }

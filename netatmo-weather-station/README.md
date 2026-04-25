@@ -25,6 +25,7 @@ The integration uses Netatmo's cloud API with OAuth authentication. The parent H
 - Field diagnostics for raw and normalized data availability
 - App-level unit preferences
 - Measurement timestamp support
+- Daily minimum/maximum temperature values where Netatmo provides them
 
 ## Requirements
 
@@ -59,13 +60,22 @@ Manual installation:
 
 You need a Netatmo developer app so Hubitat can authenticate with Netatmo.
 
-1. Create or open an application at the Netatmo developer site.
-2. Copy the Netatmo client ID and client secret.
-3. Enter those credentials in the Hubitat app.
-4. The Hubitat app displays a callback/redirect URL.
-5. Copy that callback URL into the Netatmo developer app settings where redirect or callback URLs are configured.
+1. Go to the Netatmo developer portal: https://dev.netatmo.com/
+2. Sign in with the Netatmo account that owns or has access to your Weather Station.
+3. Open the developer app/application management area.
+4. Create a new application, or open an existing application you want to use for Hubitat.
+5. Give the application a recognizable name, such as `Hubitat Netatmo Weather Station`.
+6. Save the application so Netatmo generates a client ID and client secret.
+7. Copy the Netatmo client ID and client secret.
+8. Enter those credentials in the Hubitat app and click **Done**.
+9. Reopen the Hubitat app. It will display a Netatmo callback URL.
+10. Copy that callback URL into the Netatmo developer app settings where redirect or callback URLs are configured.
+11. Save the Netatmo developer app settings.
+12. Return to Hubitat and use the authorization link to authorize Netatmo access.
 
 Netatmo's developer UI may change over time, so use the field that controls allowed OAuth redirect/callback URLs. The URL shown by Hubitat must match the redirect URI sent during authorization.
+
+The Netatmo token generator is not needed for this integration. Hubitat handles OAuth through the authorization link and callback URL.
 
 ## Setup In Hubitat
 
@@ -81,6 +91,8 @@ Netatmo's developer UI may change over time, so use the field that controls allo
 
 Polling updates existing selected child devices. It does not create child devices automatically; use the manual create/update action for child creation.
 
+Use **Run poll now** to verify polling immediately after changing the poll interval or saving the app.
+
 ## Unit Preferences
 
 Unit preferences are configured in the parent app and apply to all child devices.
@@ -88,7 +100,8 @@ Unit preferences are configured in the parent app and apply to all child devices
 - Temperature: Hubitat location default, Celsius, or Fahrenheit
 - Pressure: hPa/mbar or inHg
 - Rain: mm or inches
-- Wind speed: km/h, mph, or m/s
+- Wind speed: km/h, mph, m/s, or knots
+- Wind direction display: numeric angle, text direction, or both
 
 Netatmo source values are normalized and converted in the parent app before values are sent to child devices. Drivers receive display-ready values plus unit labels.
 
@@ -117,6 +130,8 @@ Diagnostics show:
 - Missing or null expected fields
 
 This is useful when troubleshooting stale or unreachable modules, especially rain and wind gauges where Netatmo may omit dashboard fields if the device has not reported recently.
+
+Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 
 ## Known Limitations
 
@@ -168,7 +183,7 @@ This is useful when troubleshooting stale or unreachable modules, especially rai
 ### Unit Changes Not Reflected
 
 - Unit preference changes apply when new normalized data is sent to child devices.
-- Refresh the child device, run manual sync, or wait for the next scheduled poll.
+- Refresh the child device, run manual sync, click **Run poll now**, or wait for the next scheduled poll.
 
 ### Token or Authentication Failures
 

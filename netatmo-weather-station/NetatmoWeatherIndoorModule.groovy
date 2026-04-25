@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Indoor Module - Hubitat Driver
- * Version: 0.1.0
+ * Version: 0.2.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -22,6 +22,10 @@ metadata {
         capability "RelativeHumidityMeasurement"
         capability "CarbonDioxideMeasurement"
 
+        attribute "minTemperature", "number"
+        attribute "maxTemperature", "number"
+        attribute "minTemperatureTime", "string"
+        attribute "maxTemperatureTime", "string"
         attribute "rfStatus", "number"
         attribute "reachable", "string"
         attribute "lastSeen", "string"
@@ -64,6 +68,10 @@ def updatedFromParent(Map data) {
     Map units = data.units instanceof Map ? (Map)data.units : [:]
 
     sendEventIfPresent("temperature", dashboard.temperature, units.temperature ?: temperatureUnit())
+    sendEventIfPresent("minTemperature", dashboard.minTemperature, units.temperature ?: temperatureUnit())
+    sendEventIfPresent("maxTemperature", dashboard.maxTemperature, units.temperature ?: temperatureUnit())
+    sendEventIfPresent("minTemperatureTime", dashboard.minTemperatureTime)
+    sendEventIfPresent("maxTemperatureTime", dashboard.maxTemperatureTime)
     sendEventIfPresent("humidity", dashboard.humidity, "%")
     sendEventIfPresent("carbonDioxide", dashboard.co2, "ppm")
     sendEventIfPresent("battery", metadata.batteryPercent, "%")

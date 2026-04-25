@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0] - 2026-04-25
+
+Added:
+
+- Normalized and exposed Netatmo daily minimum/maximum temperature values and timestamps for base, outdoor, and indoor modules.
+- Added knots as a wind speed unit preference.
+- Added wind direction display preference for numeric angle, text direction, or both.
+- Added wind direction string attributes for wind, gust, and maximum wind readings.
+
+## [0.1.1] - 2026-04-25
+
+Changed:
+
+- Added **Run poll now** action to verify the parent polling path without waiting for the next scheduled interval.
+- Improved first-poll status text so a newly scheduled poll does not look inactive before its first run.
+- Added **Clear field diagnostics** action to remove persisted field inspection output from the app page.
+
 ## [0.1.0] - 2026-04-25
 
 Initial development/public preview release.

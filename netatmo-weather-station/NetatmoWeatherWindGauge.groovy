@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Wind Gauge - Hubitat Driver
- * Version: 0.1.0
+ * Version: 0.2.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -21,10 +21,13 @@ metadata {
 
         attribute "windStrength", "number"
         attribute "windAngle", "number"
+        attribute "windDirection", "string"
         attribute "gustStrength", "number"
         attribute "gustAngle", "number"
+        attribute "gustDirection", "string"
         attribute "maxWindStrength", "number"
         attribute "maxWindAngle", "number"
+        attribute "maxWindDirection", "string"
         attribute "dateMaxWindStrength", "string"
         attribute "rfStatus", "number"
         attribute "reachable", "string"
@@ -68,10 +71,13 @@ def updatedFromParent(Map data) {
 
     sendEventIfPresent("windStrength", dashboard.windStrength, units.wind ?: "km/h")
     sendEventIfPresent("windAngle", dashboard.windAngle, "degrees")
+    sendEventIfPresent("windDirection", dashboard.windDirection)
     sendEventIfPresent("gustStrength", dashboard.gustStrength, units.wind ?: "km/h")
     sendEventIfPresent("gustAngle", dashboard.gustAngle, "degrees")
+    sendEventIfPresent("gustDirection", dashboard.gustDirection)
     sendEventIfPresent("maxWindStrength", dashboard.maxWindStrength, units.wind ?: "km/h")
     sendEventIfPresent("maxWindAngle", dashboard.maxWindAngle, "degrees")
+    sendEventIfPresent("maxWindDirection", dashboard.maxWindDirection)
     sendEventIfPresent("dateMaxWindStrength", dashboard.dateMaxWindStrength)
     sendEventIfPresent("battery", metadata.batteryPercent, "%")
     sendEventIfPresent("rfStatus", metadata.rfStatus)

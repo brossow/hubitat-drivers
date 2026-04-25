@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Rain Gauge - Hubitat Driver
- * Version: 0.1.0
+ * Version: 0.2.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0

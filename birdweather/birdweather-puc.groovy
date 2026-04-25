@@ -26,7 +26,7 @@
  *  • Rule Machine: IF newLifetimeSpeciesDetected THEN send push "%value%"
  */
 
-private String getDriverVersion() { return "1.4.0" }
+private String getDriverVersion() { return "1.4.1" }
 
 metadata {
     definition(
@@ -82,6 +82,7 @@ metadata {
 
         command "refresh"
         command "resetHistory"
+        command "testNewLifetimeSpecies"
     }
 }
 
@@ -214,6 +215,15 @@ def retryPoll() {
     state.retryScheduled = false
     log.info "BirdWeather PUC: retrying after transient error"
     poll()
+}
+
+def testNewLifetimeSpecies() {
+    sendEvent(
+        name:            "newLifetimeSpeciesDetected",
+        value:           "Test Species",
+        descriptionText: "New lifetime species: Test Species (Testus specius)"
+    )
+    log.info "BirdWeather: fired test newLifetimeSpeciesDetected event"
 }
 
 def resetHistory() {

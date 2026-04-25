@@ -8,7 +8,7 @@ Device drivers for [Hubitat Elevation](https://hubitat.com) by [Brent Rossow](ht
 |--------|-------------|
 | [Aeotec Heavy Duty Smart Switch](aeotec/) | Z-Wave switch with power metering (ZW078) |
 | [BirdWeather PUC](birdweather/) | Live bird detection data from a BirdWeather PUC station |
-| [Netatmo Weather Station Connect](netatmo/) | Netatmo Weather Station integration with base station and module child devices |
+| [Netatmo Weather Station Connect](netatmo-weather-station/) | Netatmo Weather Station integration with base station and module child devices |
 | [Rheem EcoNet](rheem-econet/) | Rheem EcoNet thermostats and water heaters |
 | [Xiaomi/Aqara Temperature & Humidity](xiaomi-aqara/) | Zigbee T&H sensors (WSDCGQ01LM, WSDCGQ11LM, Aqara T1, Keen Home) |
 

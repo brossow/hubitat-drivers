@@ -22,7 +22,7 @@
       "id": "a1144b49-00b4-44e4-8987-b4bc4e035dfb",
       "name": "Netatmo Weather Station Connect",
       "category": "Integrations",
-      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo/packageManifest.json",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo-weather-station/packageManifest.json",
       "description": "A Hubitat integration for Netatmo Weather Station base stations and modules, including outdoor, indoor, rain, and wind modules.",
       "tags": ["Cloud", "Weather", "Temperature & Humidity"]
     },

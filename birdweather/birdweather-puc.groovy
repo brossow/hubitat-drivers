@@ -19,15 +19,14 @@
  *
  * ── AUTOMATION IDEAS ──────────────────────────────────────────────────────
  *  • "birdDetected" event fires on every new detection → announce on speaker
- *  • "newSpeciesDetected" event fires for first sighting of a species today
+ *  • "newSpeciesDetected" fires the first time a species is seen each day
+ *  • "newLifetimeSpeciesDetected" fires when a species is seen for the very first time ever
  *  • "lastCertainty" = "Almost Certain" filter → only high-confidence alerts
  *  • "todaySpecies" attribute → display on a dashboard tile
- *  • "lifetimeSpeciesList" → ever-growing JSON array of all species detected since install
- *  • Rule Machine: IF newSpeciesDetected THEN send push notification with
- *    "%value% (%lastSpeciesScientific%)" as the message text
+ *  • Rule Machine: IF newLifetimeSpeciesDetected THEN send push "%value%"
  */
 
-private String getDriverVersion() { return "1.3.1" }
+private String getDriverVersion() { return "1.4.0" }
 
 metadata {
     definition(
@@ -69,10 +68,12 @@ metadata {
         attribute "lifetimeSpeciesList",  "string"   // JSON array of all species, sorted alphabetically
 
         // ── Automation Trigger Events (also appear in event log) ──────────
-        // birdDetected       — every new detection; value = common name
-        // newSpeciesDetected — first sighting of a species today; value = common name
-        attribute "birdDetected",         "string"
-        attribute "newSpeciesDetected",   "string"
+        // birdDetected               — every new detection; value = common name
+        // newSpeciesDetected         — first sighting of a species today; value = common name
+        // newLifetimeSpeciesDetected — first time a species has ever been detected; value = common name
+        attribute "birdDetected",                "string"
+        attribute "newSpeciesDetected",          "string"
+        attribute "newLifetimeSpeciesDetected",  "string"
 
         // ── Driver Health ─────────────────────────────────────────────────
         attribute "driverVersion",        "string"
@@ -222,7 +223,7 @@ def resetHistory() {
         "lastSpecies", "lastSpeciesScientific", "lastCertainty",
         "lastDetectedAt", "lastDetectedTime", "lastSpeciesImageUrl", "lastSoundscapeUrl",
         "recentDetections", "topSpeciesToday",
-        "birdDetected", "newSpeciesDetected", "lastPollStatus", "lastPollTime"
+        "birdDetected", "newSpeciesDetected", "newLifetimeSpeciesDetected", "lastPollStatus", "lastPollTime"
     ].each { sendEvent(name: it, value: "—") }
     sendEvent(name: "todaySpeciesList",    value: "[]")
     sendEvent(name: "lifetimeSpeciesList", value: "[]")
@@ -389,6 +390,18 @@ def handleDetectionsResponse(response, data) {
                     )
                     log.info "BirdWeather: first ${commonName} today — ${seenToday.size()} species so far"
                 }
+
+                def seenLifetime = state.lifetimeSpeciesSeen ?: []
+                if (!(commonName in seenLifetime)) {
+                    seenLifetime << commonName
+                    state.lifetimeSpeciesSeen = seenLifetime
+                    sendEvent(
+                        name:            "newLifetimeSpeciesDetected",
+                        value:           commonName,
+                        descriptionText: "New lifetime species: ${commonName} (${sciName})"
+                    )
+                    log.info "BirdWeather: new lifetime species — ${commonName}"
+                }
             } else {
                 debugLog "Event suppressed by certainty filter: ${certainty}"
             }
@@ -483,6 +496,7 @@ def handleAllTimeSpeciesResponse(response, data) {
             .sort()
 
         sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(names))
+        state.lifetimeSpeciesSeen = names
         debugLog "All-time species list: ${names.size()} species"
     } catch (Exception e) {
         log.error "BirdWeather: error parsing all-time species — ${e.message}"

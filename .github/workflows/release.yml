@@ -26,7 +26,10 @@ jobs:
         id: manifest
         run: |
           NOTES=$(jq -r '.releaseNotes' "${{ steps.tag.outputs.driver }}/packageManifest.json")
+          NAME=$(jq -r '.packageName' "${{ steps.tag.outputs.driver }}/packageManifest.json")
+          VERSION=$(jq -r '.version' "${{ steps.tag.outputs.driver }}/packageManifest.json")
           echo "notes=$NOTES" >> $GITHUB_OUTPUT
+          echo "title=${NAME} v${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         env:
@@ -34,5 +37,5 @@ jobs:
         run: |
           echo "${{ steps.manifest.outputs.notes }}" > release_notes.txt
           gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }} — ${{ steps.manifest.outputs.notes }}" \
+            --title "${{ steps.manifest.outputs.title }}" \
             --notes-file release_notes.txt

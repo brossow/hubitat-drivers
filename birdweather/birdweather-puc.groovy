@@ -26,7 +26,7 @@
  *  • Rule Machine: IF newLifetimeSpeciesDetected THEN send push "%value%"
  */
 
-private String getDriverVersion() { return "1.4.0" }
+private String getDriverVersion() { return "1.4.1" }
 
 metadata {
     definition(
@@ -364,47 +364,73 @@ def handleDetectionsResponse(response, data) {
         if (imgUrl)   sendEvent(name: "lastSpeciesImageUrl", value: imgUrl)
         if (soundUrl) sendEvent(name: "lastSoundscapeUrl",   value: soundUrl)
 
-        // ── Fire events only for NEW detections ────────────────────────────
-        if (latestId && latestId != lastSeenId) {
+        // ── Find all new detections since last poll ───────────────────────
+        // Process every detection newer than lastSeenId (oldest first) so
+        // todaySpeciesList, newSpeciesDetected, and newLifetimeSpeciesDetected
+        // are never missed because a different bird was detected[0] at poll time.
+        def newDetections = []
+        if (!lastSeenId) {
+            // First run: process only the most recent to establish baseline
+            newDetections = [latest]
+        } else if (latestId && latestId != lastSeenId) {
+            def cutoffIndex = detections.findIndexOf { it?.id?.toString() == lastSeenId }
+            def candidates  = (cutoffIndex == -1) ? detections.collect() : detections.take(cutoffIndex).collect()
+            newDetections   = candidates.reverse()  // oldest first
+        }
+
+        if (newDetections) {
             state.lastDetectionId = latestId
-            debugLog "New detection: ${commonName} (${confidence}%, ${certainty})"
+            debugLog "Processing ${newDetections.size()} new detection(s)"
 
-            if (passesEventFilter(certaintyRaw, latest.confidence)) {
-                if (enableBirdDetectedEvent != false) {
-                    sendEvent(
-                        name:            "birdDetected",
-                        value:           commonName,
-                        descriptionText: "${commonName} detected (${confidence}%, ${certainty})"
-                    )
-                }
+            def seenToday    = (state.todaySpeciesSeen    ?: []).collect()
+            def seenLifetime = (state.lifetimeSpeciesSeen ?: []).collect()
 
-                def seenToday = state.todaySpeciesSeen ?: []
-                if (!(commonName in seenToday)) {
-                    seenToday << commonName
-                    state.todaySpeciesSeen = seenToday
-                    sendEvent(name: "todaySpeciesList", value: groovy.json.JsonOutput.toJson(seenToday))
-                    sendEvent(
-                        name:            "newSpeciesDetected",
-                        value:           commonName,
-                        descriptionText: "First ${commonName} today! (${sciName})"
-                    )
-                    log.info "BirdWeather: first ${commonName} today — ${seenToday.size()} species so far"
-                }
+            newDetections.each { det ->
+                def dSp      = det.species ?: [:]
+                def dName    = speciesName(dSp)
+                def dSci     = scientificName(dSp)
+                def dConf    = pct(det.confidence)
+                def dCertRaw = det.certainty ?: ""
+                def dCert    = formatCertainty(dCertRaw)
 
-                def seenLifetime = state.lifetimeSpeciesSeen ?: []
-                if (!(commonName in seenLifetime)) {
-                    seenLifetime << commonName
-                    state.lifetimeSpeciesSeen = seenLifetime
-                    sendEvent(
-                        name:            "newLifetimeSpeciesDetected",
-                        value:           commonName,
-                        descriptionText: "New lifetime species: ${commonName} (${sciName})"
-                    )
-                    log.info "BirdWeather: new lifetime species — ${commonName}"
+                if (passesEventFilter(dCertRaw, det.confidence)) {
+                    debugLog "New detection: ${dName} (${dConf}%, ${dCert})"
+
+                    if (enableBirdDetectedEvent != false) {
+                        sendEvent(
+                            name:            "birdDetected",
+                            value:           dName,
+                            descriptionText: "${dName} detected (${dConf}%, ${dCert})"
+                        )
+                    }
+
+                    if (!(dName in seenToday)) {
+                        seenToday << dName
+                        sendEvent(name: "todaySpeciesList", value: groovy.json.JsonOutput.toJson(seenToday))
+                        sendEvent(
+                            name:            "newSpeciesDetected",
+                            value:           dName,
+                            descriptionText: "First ${dName} today! (${dSci})"
+                        )
+                        log.info "BirdWeather: first ${dName} today — ${seenToday.size()} species so far"
+                    }
+
+                    if (!(dName in seenLifetime)) {
+                        seenLifetime << dName
+                        sendEvent(
+                            name:            "newLifetimeSpeciesDetected",
+                            value:           dName,
+                            descriptionText: "New lifetime species: ${dName} (${dSci})"
+                        )
+                        log.info "BirdWeather: new lifetime species — ${dName}"
+                    }
+                } else {
+                    debugLog "Event suppressed by certainty filter: ${dCert}"
                 }
-            } else {
-                debugLog "Event suppressed by certainty filter: ${certainty}"
             }
+
+            state.todaySpeciesSeen    = seenToday
+            state.lifetimeSpeciesSeen = seenLifetime
         }
 
         sendEvent(name: "lastPollStatus", value: "OK")

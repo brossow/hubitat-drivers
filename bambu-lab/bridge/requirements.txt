@@ -1,0 +1,2 @@
+paho-mqtt>=1.6.1,<2.0  # paho 2.x has breaking API changes; intentionally pinned to 1.x
+requests>=2.28.0

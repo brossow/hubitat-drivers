@@ -1,0 +1,31 @@
+{
+  "packageName": "Bambu Lab Printer",
+  "minimumHEVersion": "2.2.8",
+  "author": "Brent Rossow",
+  "version": "1.0.0",
+  "dateReleased": "2026-05-01",
+  "releaseNotes": "Initial release. Live dashboard tiles showing print progress, temperatures, filament state, and AMS contents — updated in real time from the printer's local MQTT broker via the bambu_bridge Docker container.",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/bambu-lab",
+  "communityLink": "",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/LICENSE",
+  "apps": [
+    {
+      "id": "94fc3bc4-e947-4012-aee6-ff1404027713",
+      "name": "Bambu Bridge",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/bambu-bridge-app.groovy",
+      "required": true,
+      "primaryType": "App"
+    }
+  ],
+  "drivers": [
+    {
+      "id": "52609075-fde7-4f4d-817d-a45dda1bb2f6",
+      "name": "Bambu Lab Printer",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/bambu-printer.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    }
+  ]
+}

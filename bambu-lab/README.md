@@ -9,7 +9,7 @@ Monitor your Bambu Lab 3D printer from a Hubitat Elevation dashboard. Live statu
 ## How it works
 
 ```
-Printer (LAN MQTT) → bambu_bridge (Docker) → Hubitat app (HTTP) → Dashboard tiles
+Printer (LAN MQTT) → bambu_bridge (Python) → Hubitat app (HTTP) → Dashboard tiles
 ```
 
 1. **`bambu_bridge`** — a Python script that connects to the printer's built-in MQTT broker over your local network, parses status messages, and POSTs the data to Hubitat every time the printer reports a change.

@@ -585,12 +585,12 @@ private Integer _parseRemain(String remain) {
 
 private String _amsCss() {
     return """\
-.ams-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));grid-auto-rows:auto;align-content:start;gap:clamp(6px,1.5vw,14px);min-height:0}
-.unit{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(4px,1vmin,8px);padding:clamp(6px,2vmin,14px);border:1px solid var(--cu);border-radius:clamp(4px,1vmin,8px);overflow:hidden}
+.ams-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));grid-auto-rows:auto;align-content:start;gap:clamp(6px,1.5vw,14px);min-height:0}
+.unit{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(4px,1vmin,8px);padding:clamp(6px,1.5vmin,10px);border:1px solid var(--cu);border-radius:clamp(4px,1vmin,8px);overflow:hidden}
 .ul{font-size:clamp(10px,2vmin,16px);color:var(--cm);text-align:center}
-.row{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(4px,2vmin,14px);width:100%}
-.tray{text-align:center}
-.sw{width:clamp(20px,7vw,52px);aspect-ratio:1;border-radius:clamp(3px,1vmin,6px);margin:0 auto}
+.row{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(3px,1vw,8px);width:100%}
+.tray{text-align:center;min-width:0}
+.sw{width:min(40px,100%);aspect-ratio:1;border-radius:clamp(3px,1vmin,6px);margin:0 auto}
 .sw.empty{border:1px dashed var(--cm)}
 .sw.active{outline:clamp(2px,.5vmin,3px) solid var(--ao);outline-offset:clamp(1px,.3vmin,3px)}
 .tt{font-size:clamp(10px,2.5vmin,16px);color:var(--cd);margin-top:clamp(2px,.5vmin,5px)}

@@ -3,14 +3,6 @@
   "gitHubUrl": "https://github.com/brossow",
   "packages": [
     {
-      "id": "3d0dadc0-355d-4656-9a4c-09d491311b98",
-      "name": "Bambu Lab Printer",
-      "category": "Integrations",
-      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/packageManifest.json",
-      "description": "Live dashboard tiles for Bambu Lab 3D printers — print progress, temperatures, and AMS filament state, updated in real time from the printer's local MQTT broker.",
-      "tags": ["LAN", "Monitoring", "3D Printing"]
-    },
-    {
       "id": "2219f951-b195-4f65-bf33-4d822c133d11",
       "name": "Aeotec Heavy Duty Smart Switch",
       "category": "Control",

@@ -89,8 +89,8 @@ def mainPage() {
         section("") {
             href "notificationsPage", title: "Notifications",
                  description: "Push alerts for print events and progress milestones"
-            href "automationsPage",   title: "Automations",
-                 description: "Control switches and dimmers based on printer state"
+            href "automationsPage",   title: "Event Actions",
+                 description: "Trigger switches and dimmers on print start, pause, finish, and error"
         }
         section("Logging") {
             input name: "logEnable", type: "bool", title: "Enable debug logging", defaultValue: false
@@ -112,34 +112,33 @@ def notificationsPage() {
             input name: "notifyOnError",    type: "bool", title: "Notify on printer error",             defaultValue: true
             input name: "notifyOnFilament", type: "bool", title: "Notify on filament type change",      defaultValue: false
         }
-        section("Progress Milestones") {
-            input name: "milestones", type: "enum",
-                  title: "Send a notification at these completion percentages",
-                  options: ["25", "50", "75", "90"], multiple: true, required: false
-        }
     }
 }
 
 def automationsPage() {
-    dynamicPage(name: "automationsPage", title: "Automations", nextPage: "mainPage") {
-        section("When Printing Starts") {
+    dynamicPage(name: "automationsPage", title: "Event Actions", nextPage: "mainPage") {
+        section("Print Starts") {
             input name: "switchOnStart",  type: "capability.switch", title: "Turn ON",  multiple: true, required: false
             input name: "switchOffStart", type: "capability.switch", title: "Turn OFF", multiple: true, required: false
         }
-        section("When Print Finishes") {
+        section("Print Pauses") {
+            input name: "switchOnPause",  type: "capability.switch", title: "Turn ON",  multiple: true, required: false
+            input name: "switchOffPause", type: "capability.switch", title: "Turn OFF", multiple: true, required: false
+        }
+        section("Print Finishes") {
             input name: "switchOnFinish",  type: "capability.switch",      title: "Turn ON",  multiple: true, required: false
             input name: "switchOffFinish", type: "capability.switch",      title: "Turn OFF", multiple: true, required: false
             input name: "dimmerOnFinish",  type: "capability.switchLevel", title: "Set level on these dimmers", multiple: true, required: false
             input name: "dimmerLevel",     type: "number", title: "Dimmer level (0–100)", range: "0..100", defaultValue: 100, required: false
         }
-        section("When Printer Errors") {
+        section("Printer Error") {
             input name: "switchOnError", type: "capability.switch", title: "Turn ON", multiple: true, required: false
         }
-        section("Hub Mode Restriction") {
+        section("Mode Filter") {
             input name: "restrictModes", type: "mode",
-                  title: "Only run automations when hub mode is",
+                  title: "Only trigger actions when hub mode is",
                   multiple: true, required: false,
-                  description: "Leave blank to run in all modes"
+                  description: "Leave blank to trigger in all modes"
         }
     }
 }
@@ -168,13 +167,11 @@ private void initialize() {
     _pushStubs()
     if (!printerDevice) return
 
-    subscribe(printerDevice, "printerState",  "onPrinterStateChange")
-    subscribe(printerDevice, "printProgress", "onProgressChange")
-    subscribe(printerDevice, "filamentType",  "onFilamentTypeChange")
+    subscribe(printerDevice, "printerState", "onPrinterStateChange")
+    subscribe(printerDevice, "filamentType", "onFilamentTypeChange")
 
     state.lastState        = printerDevice.currentValue("printerState") ?: "IDLE"
     state.lastFilamentType = printerDevice.currentValue("filamentType") ?: "—"
-    if (state.lastState != "RUNNING") state.milestonesHit = []
 }
 
 // ── Endpoint routing ───────────────────────────────────────────────────────────
@@ -230,7 +227,6 @@ def onPrinterStateChange(evt) {
     if (logEnable) log.debug "printerState: ${prev} → ${next}"
 
     if (next == "RUNNING" && prev != "RUNNING") {
-        state.milestonesHit = []
         if (notifyOnStart) {
             String f = printerDevice.currentValue("printFile") ?: "unknown file"
             _notify("Bambu printer started: ${f}")
@@ -247,8 +243,9 @@ def onPrinterStateChange(evt) {
         _automate("finish")
     }
 
-    if (next == "PAUSE" && notifyOnPause) {
-        _notify("Bambu printer paused")
+    if (next == "PAUSE" && prev == "RUNNING") {
+        if (notifyOnPause) _notify("Bambu printer paused")
+        _automate("pause")
     }
 
     if (next == "FAILED") {
@@ -257,23 +254,6 @@ def onPrinterStateChange(evt) {
     }
 
     state.lastState = next
-}
-
-def onProgressChange(evt) {
-    if (printerDevice.currentValue("printerState") != "RUNNING") return
-    if (!milestones) return
-
-    int pct = (evt.integerValue ?: 0) as int
-    List hit = state.milestonesHit ?: []
-    milestones.each { m ->
-        int target = m as int
-        if (pct >= target && !(target in hit)) {
-            hit << target
-            String f = printerDevice.currentValue("printFile") ?: "unknown file"
-            _notify("Bambu printer is ${target}% complete — ${f}")
-        }
-    }
-    state.milestonesHit = hit
 }
 
 def onFilamentTypeChange(evt) {
@@ -295,6 +275,10 @@ private void _automate(String trigger) {
         case "start":
             switchOnStart?.each  { it.on()  }
             switchOffStart?.each { it.off() }
+            break
+        case "pause":
+            switchOnPause?.each  { it.on()  }
+            switchOffPause?.each { it.off() }
             break
         case "finish":
             switchOnFinish?.each { it.on()  }
@@ -472,12 +456,12 @@ private String _amsBodyHtml(String summary, int trayNow) {
     trays.each { t -> units[t.unit] << t }
 
     def colSetting = amsColumns ?: "auto"
-    def gridCols   = (colSetting == "auto")
-        ? "repeat(auto-fill,minmax(160px,1fr))"
-        : "repeat(${Math.min(colSetting.toInteger(), units.size())},1fr)"
+    def colStyle   = (colSetting == "auto")
+        ? ""
+        : " style='grid-template-columns:repeat(${Math.min(colSetting.toInteger(), units.size())},1fr)'"
 
     def sb = new StringBuilder()
-    sb << "<div class='ams-body' style='grid-template-columns:${gridCols}'>"
+    sb << "<div class='ams-body'${colStyle}>"
     units.keySet().sort().each { uid ->
         sb << "<div class='unit'><div class='ul'>Unit ${uid + 1}</div><div class='row'>"
         units[uid].sort { it.tray }.each { t ->
@@ -600,12 +584,12 @@ private Integer _parseRemain(String remain) {
 
 private String _amsCss() {
     return """\
-.ams-body{flex:1;display:grid;grid-auto-rows:1fr;gap:clamp(6px,1.5vw,14px);overflow:hidden;min-height:0}
-.unit{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(4px,1vmin,8px);padding:clamp(6px,2vmin,14px);border:1px solid var(--cu);border-radius:clamp(4px,1vmin,8px)}
+.ams-body{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));grid-auto-rows:auto;align-content:start;gap:clamp(6px,1.5vw,14px);overflow-y:auto;min-height:0}
+.unit{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:clamp(4px,1vmin,8px);padding:clamp(6px,2vmin,14px);border:1px solid var(--cu);border-radius:clamp(4px,1vmin,8px)}
 .ul{font-size:clamp(10px,2vmin,16px);color:var(--cm);text-align:center}
-.row{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(4px,2vmin,14px)}
+.row{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(4px,2vmin,14px);width:100%}
 .tray{text-align:center}
-.sw{width:min(clamp(24px,10vmin,72px),100%);aspect-ratio:1;border-radius:clamp(3px,1vmin,6px);margin:0 auto}
+.sw{width:clamp(20px,7vw,52px);aspect-ratio:1;border-radius:clamp(3px,1vmin,6px);margin:0 auto}
 .sw.empty{border:1px dashed var(--cm)}
 .sw.active{outline:clamp(2px,.5vmin,3px) solid var(--ao);outline-offset:clamp(1px,.3vmin,3px)}
 .tt{font-size:clamp(10px,2.5vmin,16px);color:var(--cd);margin-top:clamp(2px,.5vmin,5px)}

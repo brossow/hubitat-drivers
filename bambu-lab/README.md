@@ -1,6 +1,6 @@
 # Bambu Lab → Hubitat Integration
 
-Monitor your Bambu Lab 3D printer from a Hubitat Elevation dashboard. Live status tiles show print progress, temperatures, filament state, and AMS contents — all updated in real time from the printer's local MQTT broker.
+Monitor your Bambu Lab 3D printer from a Hubitat Elevation dashboard. Live status tiles show print progress, temperatures, filament state, and AMS contents — all updated in real time directly from the printer's local MQTT broker. No extra hardware, no Docker, no bridge device required.
 
 ![Dark theme status + AMS tile](screenshot-dark.png)
 
@@ -9,135 +9,117 @@ Monitor your Bambu Lab 3D printer from a Hubitat Elevation dashboard. Live statu
 ## How it works
 
 ```
-Printer (LAN MQTT) → bambu_bridge (Python) → Hubitat app (HTTP) → Dashboard tiles
+Printer (LAN MQTT) → Hubitat driver (MQTT client) → Dashboard tiles
 ```
 
-1. **`bambu_bridge`** — a Python script that connects to the printer's built-in MQTT broker over your local network, parses status messages, and POSTs the data to Hubitat every time the printer reports a change.
-2. **`BambuBridgeApp`** — a Hubitat app that receives those POSTs, throttles device event updates, and serves live HTML pages for the dashboard tiles.
-3. **`BambuPrinterDriver`** — a Hubitat virtual device driver that stores all printer state as attributes. The dashboard tiles read from this device.
+The driver opens a direct TLS connection to the printer's on-board MQTT broker (port 8883), authenticating with your LAN access code. The companion app serves the visual dashboard tile pages and handles notifications and automations.
 
-The bridge uses the printer's **local LAN MQTT broker** (port 8883). This works regardless of whether "LAN Only Mode" is enabled on the printer — LAN Only Mode only affects the Bambu cloud connection. Your Bambu app and remote access continue to work normally.
+Everything runs over your local network. "LAN Only Mode" does not need to be enabled — the MQTT broker is always accessible on the LAN. Remote access and the Bambu Handy app are unaffected.
 
 ---
 
 ## Components
 
-### `bridge/` — Python MQTT bridge
-
 | File | Purpose |
 |---|---|
-| `bambu_bridge.py` | Main bridge script |
-| `Dockerfile` | Container image definition |
-| `docker-compose.yml` | Service definition for Docker Compose |
-| `requirements.txt` | Python dependencies |
-| `.env.example` | Environment variable template — copy to `.env` and fill in |
-
-### Hubitat code
-
-| File | Install via |
-|---|---|
-| `bambu-printer.groovy` | Hubitat → Drivers Code |
-| `bambu-bridge-app.groovy` | Hubitat → Apps Code |
+| `bambu-printer.groovy` | Hubitat device driver — MQTT client, parses printer telemetry, exposes all attributes |
+| `bambu-lab-app.groovy` | Hubitat app — dashboard tile serving (via OAuth), notifications, automations |
 
 ---
 
 ## Setup
 
-### 1. Hubitat: install the driver and app
+### 1. Find your printer credentials
 
-**Via Hubitat Package Manager (recommended):** search for **Bambu Lab Printer** in HPM and install. Both the driver and app are installed in one step.
+Before installing anything, collect these from your printer's touchscreen:
+
+| Value | Where to find it |
+|---|---|
+| **IP Address** | Touchscreen: Settings → Network. Recommended: reserve a static DHCP lease in your router so the address doesn't change. |
+| **Serial Number** | Touchscreen: Settings → Device Info. Also shown in Bambu Studio on the Device tab. |
+| **LAN Access Code** | Touchscreen: Settings → Network (eight-character code below the IP address). |
+
+### 2. Install the driver and app
+
+**Via Hubitat Package Manager (recommended):** search for **Bambu Lab Printer** and install. Both components are installed in one step.
 
 **Manual install:**
 
 1. In Hubitat, go to **Drivers Code** → **+ New Driver** → **Import**
-   Paste this URL: `https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/bambu-printer.groovy`
+   Paste: `https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/bambu-printer.groovy`
 2. Go to **Apps Code** → **+ New App** → **Import**
-   Paste this URL: `https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/bambu-bridge-app.groovy`
-3. **Important:** click **OAuth** → **Enable OAuth** on the Apps Code page before continuing — the dashboard tiles won't work without it
-4. Go to **Devices** → **Add Device** → **Virtual**, name it (e.g. "Bambu Lab X1C"), select **Bambu Lab Printer** as the driver, and save
-5. Go to **Apps** → **Add User App** → **Bambu Bridge**
-6. Select the virtual device you created, configure preferences (see below), and save
-7. Copy the **Bridge POST URL** shown on the app page — you'll need it in the next step
+   Paste: `https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/bambu-lab-app.groovy`
+3. **Important:** on the Apps Code page for Bambu Lab Printer, click **OAuth** → **Enable OAuth** — required for dashboard tiles
 
-### 2. Bridge: configure and run
+### 3. Create the device
 
-Copy `.env.example` to `.env` in the `bridge/` directory and fill in your values:
+1. Go to **Devices** → **Add Device** → **Virtual**
+2. Give it a name (e.g. "Bambu X1C")
+3. Set **Type** to **Bambu Lab Printer** (namespace: brossow)
+4. Click **Create Device**
+5. In **Preferences**, fill in your printer's IP address, serial number, and LAN access code
+6. Click **Save Preferences** — the driver connects immediately
 
-```env
-BAMBU_IP=10.0.1.x           # Printer's local IP address
-BAMBU_ACCESS_CODE=xxxxxxxx   # 8-character code: printer touchscreen → Settings → WLAN
-BAMBU_SERIAL=01P00C000000000 # Serial number: Bambu Studio → Device tab, or printer touchscreen
-HUBITAT_URL=http://...       # Paste the Bridge POST URL from the Bambu Bridge app page
-```
+If the connection succeeds, `connectionStatus` will show **connected** in Current States within a few seconds.
 
-#### Running with Docker (recommended)
+### 4. Install the app
 
-```bash
-cd bridge
-docker compose up -d
-```
+1. Go to **Apps** → **+ Add User App** → **Bambu Lab Printer**
+2. Select the printer device you created
+3. Configure tile appearance, notifications, and automations as desired
+4. Click **Done**
 
-The container restarts automatically unless stopped. To apply `.env` changes:
+### 5. Add the dashboard tile
 
-```bash
-docker compose down && docker compose up -d
-```
-
-To view logs:
-
-```bash
-docker compose logs -f
-```
-
-#### Running without Docker
-
-See **[docs/platform-setup.md](docs/platform-setup.md)** for step-by-step guides covering macOS, Raspberry Pi, Windows (NSSM and Task Scheduler), QNAP, Unraid, and general Linux. All guides include virtual environment setup and persistent service configuration.
-
-### 3. Hubitat: set up the dashboard
-
-1. Create a new Hubitat dashboard (or open an existing one)
+1. Open or create a Hubitat dashboard
 2. Add an **Attribute** tile:
-   - Device: your Bambu Lab Printer virtual device
-   - Attribute: **`html`** — this is the combined status + AMS tile
-3. Give the tile plenty of vertical space — portrait orientation (taller than wide) works well. Experiment with row and column span settings for your screen size.
-4. **Recommended: set the tile background to transparent.** In dashboard settings → **Templates** → **Attribute** → **default** state → set **Background Color** transparency to 0. This lets the tile's own background show through cleanly. Note: this affects all Attribute tiles on that dashboard. The tile works without this step, but the dashboard's default tile color will appear as a border around the content.
+   - Device: your Bambu Lab Printer device
+   - Attribute: **`html`** — combined status + AMS tile
+3. Give the tile plenty of vertical space — portrait orientation (taller than wide) works well
+4. **Recommended:** in dashboard settings → **Templates** → **Attribute** → **default** state → set **Background Color** transparency to 0. This lets the tile's own background show through. (Affects all Attribute tiles on that dashboard.)
 
-Optionally, add a second **Attribute** tile using attribute **`htmlAms`** for a standalone AMS filament tile — useful for wide dashboard layouts where you want status and AMS side by side.
+Optionally, add a second **Attribute** tile using attribute **`htmlAms`** for a standalone AMS filament tile — useful for wide layouts.
 
 ---
 
 ## App settings
 
-Open **Apps** → **Bambu Bridge** to adjust these at any time. Changes take effect immediately without restarting the bridge.
-
-### Update Frequency
-
-How often the Hubitat device attributes are updated. The bridge receives data from the printer continuously; this controls how often those updates are forwarded to Hubitat device events.
-
-| Option | Notes |
-|---|---|
-| 1 second ⚠️ | Very high event volume — may affect hub performance |
-| 5 seconds ⚠️ | High event volume |
-| 10 seconds | |
-| **30 seconds** | **Default** |
-| 1 minute | |
-| 5 minutes | |
-
-Printer state changes (e.g. IDLE → RUNNING) always trigger an immediate update regardless of this setting. The dashboard tiles refresh independently of device events, so even at 5-minute intervals the tile display is always current.
-
 ### Tile Appearance
 
-**Color theme** — choose based on your dashboard background:
+**Color theme:**
 - **Dark** (default) — calibrated for dark dashboard backgrounds (~#1C1C1C)
 - **Light** — calibrated for light dashboard backgrounds (~#F8F8F8)
 
-Both themes are designed to meet WCAG AA contrast standards (4.5:1 for normal text, 3:1 for large text).
+Both themes meet WCAG AA contrast standards.
 
-**Show AMS filament section in combined tile** — when enabled (default), the `html` tile shows printer status on top and AMS filament below. Disable this if you have no AMS or prefer status-only. The AMS section auto-hides if no AMS data is reported by the printer regardless of this setting.
+**Show AMS filament section in combined tile** — when enabled (default), the `html` tile shows printer status on top and AMS filament below. Auto-hides if no AMS data is reported by the printer.
 
-**AMS tile columns** — controls how many columns the AMS unit grid uses:
-- **Auto** (default) — the browser fits as many columns as the tile width allows, with a minimum unit width of 160px. A portrait tile typically shows 2 columns; a wide tile shows more.
-- **1–4, 6, 8, 12** — fixed column count. Useful when Auto doesn't give the layout you want. The column count is automatically capped at the number of AMS units present, so no empty slots are shown.
+**AMS tile columns:**
+- **Auto** (default) — browser fits as many columns as tile width allows (min 160px per unit)
+- **1–4, 6, 8, 12** — fixed column count; capped at the number of AMS units present
+
+### Notifications
+
+Configure which events trigger push notifications. Notifications are sent to any Hubitat-compatible notification device (e.g. the Hubitat mobile app).
+
+| Trigger | Default |
+|---|---|
+| Print finished (includes filename and elapsed time) | On |
+| Print started | Off |
+| Print paused | Off |
+| Printer error | On |
+| Filament type changed | Off |
+| Progress milestones (25 / 50 / 75 / 90 %) | Off |
+
+### Automations
+
+Control switches and dimmers based on printer events. An optional **hub mode restriction** limits automations to specific modes.
+
+| Event | Actions available |
+|---|---|
+| Print starts | Turn switches ON / OFF |
+| Print finishes | Turn switches ON / OFF; set dimmers to a level |
+| Printer error | Turn switches ON |
 
 ---
 
@@ -145,35 +127,34 @@ Both themes are designed to meet WCAG AA contrast standards (4.5:1 for normal te
 
 ### Combined tile (`html` attribute)
 
-The primary tile. Shows:
+Shows:
 - **Printer state** — Idle / Preparing / Printing / Paused / Finished / Failed, color-coded
 - **File name** — the print job name
-- **Progress bar** — percentage, layer count, estimated time remaining
-- **Temperatures** — nozzle, bed, and chamber. Temperature text is color-coded:
-  - Neutral (gray) — no active target (printer idle)
-  - Amber — heating toward target
-  - Green — at target temperature (within ±3°C)
-  - Target temperatures are always shown; displays `—` when idle
-- **Speed** — current speed profile and magnitude (shown during active prints)
-- **AMS section** — filament units, swatch colors, material types, and remaining percentages (when enabled and AMS data is available)
-- **Timestamp** — last data received from the printer, displayed in your local timezone
-- **Auto-refresh** — tile content reloads automatically every 30 seconds; no manual page reload needed
+- **Progress bar** — percentage, layer count, elapsed time, and estimated time remaining
+- **Temperatures** — nozzle, bed, and chamber. Color-coded: neutral when idle, amber when heating, green when at target
+- **Speed + filament** — current speed profile and magnitude, plus active filament type with color swatch (shown during active prints)
+- **AMS section** — all filament units with color swatches, material types, and remaining percentages; active tray highlighted (when enabled and AMS data available)
+- **Connection indicator** — small dot in the footer showing MQTT connection state
+- **Timestamp** — last data received, displayed in your local timezone
+- **Auto-refresh** — tile reloads every 30 seconds automatically
 
 ### AMS-only tile (`htmlAms` attribute)
 
-Same AMS content as the combined tile, served independently. Useful for wide layouts where you want status and filament on separate tiles side by side.
+Same AMS content, served independently. Useful for wide layouts with status and filament on separate tiles side by side.
 
 ---
 
 ## Device attributes
 
-All attributes are updated by the bridge and available for use in Hubitat automations, rules, and additional dashboard tiles.
+All attributes are exposed as standard Hubitat device state and available in Rule Machine, automations, and additional dashboard tiles.
 
 | Attribute | Type | Description |
 |---|---|---|
+| `connectionStatus` | string | `connected` · `disconnected` |
 | `printerState` | string | `IDLE` · `PREPARE` · `RUNNING` · `PAUSE` · `FINISH` · `FAILED` |
 | `printFile` | string | Current print job filename |
 | `printProgress` | number | Progress 0–100% |
+| `printElapsed` | string | Elapsed print time (H:MM:SS, tracked locally) |
 | `remainingTime` | number | Estimated minutes remaining |
 | `currentLayer` | number | Current layer number |
 | `totalLayers` | number | Total layer count |
@@ -184,64 +165,61 @@ All attributes are updated by the bridge and available for use in Hubitat automa
 | `chamberTemp` | number | Chamber temperature (°C) |
 | `speedLevel` | string | Speed profile: Quiet · Standard · Sport · Ludicrous |
 | `speedMagnitude` | number | Speed percentage |
+| `filamentType` | string | Active tray material (e.g. PLA, PETG) |
+| `filamentColor` | string | Active tray color (#RRGGBB) |
+| `amsSummary` | string | Compact AMS summary (e.g. `A0T0:PLA/FF0000/75%`) |
+| `amsTrayNow` | number | Active tray global index (255 = none / external spool) |
+| `chamberLight` | string | Chamber light state: `on` · `off` (read-only) |
 | `printError` | string | Error code (`"0"` = no error) |
 | `wifiSignal` | string | WiFi signal strength |
-| `amsSummary` | string | Compact AMS summary (e.g. `A0T0:PLA/FF0000/75%`) |
-| `amsTrayNow` | number | Active tray global index (255 = none/external spool) |
-| `cameraUrl` | string | RTSP stream URL (`rtsps://bblp:<access_code>@<printer_ip>:322/streaming/live/1`) |
-| `lastUpdate` | string | ISO-8601 UTC timestamp of last data |
+| `cameraUrl` | string | RTSP stream URL |
+| `lastUpdate` | string | ISO-8601 UTC timestamp of last MQTT data |
 | `html` | string | iframe stub for the combined dashboard tile |
-| `htmlAms` | string | iframe stub for the standalone AMS dashboard tile |
+| `htmlAms` | string | iframe stub for the standalone AMS tile |
 | `driverVersion` | string | Installed driver version |
 
 ---
 
-## Bridge environment variables
+## Troubleshooting
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `BAMBU_IP` | ✅ | — | Printer's local IP address |
-| `BAMBU_ACCESS_CODE` | ✅ | — | 8-character WLAN access code from printer touchscreen |
-| `BAMBU_SERIAL` | ✅ | — | Printer serial number |
-| `HUBITAT_URL` | ✅ | — | Full endpoint URL from the Bambu Bridge app page |
-| `RECONNECT_DELAY` | | `30` | Seconds between MQTT reconnect attempts |
-| `LOG_LEVEL` | | `INFO` | `DEBUG` · `INFO` · `WARNING` · `ERROR` |
+**Device shows `connectionStatus: disconnected` immediately after saving**
+- Verify the printer IP address is correct and that the hub can reach it (try pinging from a device on the same network)
+- Double-check the LAN access code — transcription errors are common; re-copy it from the touchscreen
+- Ensure nothing on your network is blocking TCP port 8883 between the hub and the printer
+- Turn on **Debug Logging** in device preferences and review the Hubitat live log for the specific error message
+
+**Driver connects but status never updates / attributes stay stale**
+- Newer Bambu firmware may send only delta payloads rather than full state; the driver compensates by requesting a full push on the refresh schedule
+- If attributes are slow to populate, lower the **Status Refresh Interval** to 60 seconds in device preferences
+- The driver watches for prolonged silence from the printer and triggers an automatic full reconnect when it detects a stale connection
+
+**Dashboard tiles are blank when viewing remotely**
+- The tile `src` URLs point to your hub's local IP. They only load when your browser can reach that address directly — on your local network, or over a VPN. Hubitat cloud dashboard relay will show blank iframes. This is a known limitation of the iframe tile architecture.
+
+**Dashboard tile shows "Please select an attribute"**
+- Set the tile attribute to `html` (not a state or other attribute)
+
+**Hubitat app page shows no OAuth tiles / tiles don't load**
+- OAuth must be enabled: Apps Code → Bambu Lab Printer → OAuth → Enable OAuth → Save
+- Reinstall the app (remove and re-add) to regenerate the access token if needed
+
+**AMS section not appearing**
+- Confirm "Show AMS filament section" is enabled in app settings
+- AMS data is included in the MQTT payload automatically when an AMS is connected
+- Click **Refresh** on the device page to request a full status push
+
+**Direct SSL connection doesn't work on my hub**
+- Use the optional MQTT relay: set up a local Mosquitto broker that relays the printer topic, then configure **MQTT Relay Host** and **MQTT Relay Port** in device preferences
 
 ---
 
 ## Compatibility
 
 - **Tested on:** Bambu Lab X1C
-- **Should work on:** X1, P1S, P1P, A1, A1 Mini (same MQTT protocol)
-- **Firmware:** Recent firmware is recommended for full feature compatibility. The MQTT payload format has evolved across firmware versions — running current or near-current firmware avoids known field location changes.
-- **Multi-nozzle printers** (X2D, H2D, etc.): single-nozzle display only in v1. Multi-nozzle support requires knowing those models' MQTT payload format for additional nozzles — contributions welcome once those formats are documented. *(If you'd like to donate a unit to support development, please get in touch.)*
-- **AMS Lite:** untested but expected to work; reports through the same MQTT fields
-- **Multiple AMS units:** supported, up to 12 (hardware maximum)
-
----
-
-## Troubleshooting
-
-**Dashboard tiles are blank when viewing remotely**
-- The tile `src` URLs point to your Hubitat hub's local IP address. They only load when your browser can reach that IP directly — i.e., on the same local network or over a VPN. Remote access via Hubitat's cloud relay (remote dashboard) will show a blank iframe because the browser can't reach a LAN address. This is a known limitation with no workaround in the current architecture.
-
-**Bridge connects but Hubitat isn't receiving data**
-- Confirm `HUBITAT_URL` in `.env` matches exactly what the Bambu Bridge app page shows
-- After changing `.env`, restart with `docker compose down && docker compose up -d` (not `docker compose restart`)
-- Check bridge logs: `docker compose logs -f`
-
-**Hubitat app page shows no endpoint URL**
-- OAuth must be enabled: Apps Code → Bambu Bridge → OAuth → Enable OAuth → Save
-
-**Printer device not appearing in app setup**
-- The device selector shows capability.sensor devices. Confirm the virtual device was created with the Bambu Lab Printer driver.
-
-**Dashboard tile shows "Please select an attribute"**
-- The tile attribute must be set to `html` (not a state or other attribute)
-
-**AMS section not appearing**
-- Confirm "Show AMS filament section" is enabled in app settings
-- AMS data must be present in the printer's MQTT payload — this is automatic when an AMS is connected
+- **Expected to work:** X1, P1S, P1P, A1, A1 Mini — same MQTT protocol
+- **AMS Lite:** untested but expected to work (reports through the same MQTT fields)
+- **Multiple AMS units:** supported, up to 12 (the hardware maximum)
+- **Multi-nozzle printers** (X2D, H2D): single-nozzle display only in v1; contributions welcome once those payload formats are documented
 
 ---
 

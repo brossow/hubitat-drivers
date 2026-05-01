@@ -403,7 +403,7 @@ body{background:var(--bg);font-family:sans-serif;color:var(--ct);height:100vh;pa
 .filament{display:flex;align-items:center;gap:clamp(3px,.5vw,6px)}
 .fsw{display:inline-block;width:clamp(10px,2.5vw,18px);height:clamp(10px,2.5vw,18px);border-radius:50%;flex-shrink:0}
 .sep{border:none;border-top:1px solid var(--cu);flex-shrink:0}
-.ams-wrap{flex:1;display:flex;flex-direction:column;min-height:0;gap:clamp(3px,.8vw,8px)}
+.ams-wrap{flex:1;display:flex;flex-direction:column;min-height:0;gap:clamp(3px,.8vw,8px);overflow-y:auto}
 .ams-head{font-size:clamp(13px,3.5vw,22px);font-weight:700;color:var(--cd);flex-shrink:0}
 .empty{color:var(--cm);font-size:clamp(11px,3vw,16px);margin:auto}
 ${_amsCss()}
@@ -434,13 +434,14 @@ private String _buildAmsPage() {
 :root{--bg:${th.bg};--ct:${th.text};--cd:${th.dim};--cm:${th.dimmer};--cf:${th.faint};--ao:${th.activeOutline};--cu:${th.unitBorder}}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);font-family:sans-serif;color:var(--ct);height:100vh;padding:clamp(6px,2vw,14px);display:flex;flex-direction:column;overflow:hidden}
-.heading{font-size:clamp(13px,3.5vw,22px);font-weight:700;color:var(--cd);margin-bottom:clamp(4px,1vw,10px)}
+.heading{font-size:clamp(13px,3.5vw,22px);font-weight:700;color:var(--cd);margin-bottom:clamp(4px,1vw,10px);flex-shrink:0}
+.ams-scroll{flex:1;overflow-y:auto;min-height:0}
 .empty{color:var(--cm);font-size:clamp(11px,3vw,16px);margin:auto}
 ${_amsCss()}
 .foot{font-size:clamp(10px,1.8vw,14px);color:var(--cf);padding-top:clamp(4px,1vw,8px);display:flex;justify-content:space-between;align-items:center}
 </style></head><body>
 <div class='heading'>AMS Filament</div>
-${content}
+<div class='ams-scroll'>${content}</div>
 <div class='foot'><span style='color:${connColor}'>&#11044;</span><span id='ts'>${timeOnly} UTC</span></div>
 <script>(function(){try{var d=new Date('${updated}');if(isNaN(d.getTime()))return;var n=new Date(),same=d.toDateString()===n.toDateString(),fmt={month:'short',day:'numeric'};document.getElementById('ts').textContent=same?d.toLocaleTimeString():d.toLocaleDateString(undefined,fmt)+' '+d.toLocaleTimeString();}catch(e){}})();</script>
 </body></html>"""
@@ -584,8 +585,8 @@ private Integer _parseRemain(String remain) {
 
 private String _amsCss() {
     return """\
-.ams-body{flex:1;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));grid-auto-rows:auto;align-content:start;gap:clamp(6px,1.5vw,14px);overflow-y:auto;min-height:0}
-.unit{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:clamp(4px,1vmin,8px);padding:clamp(6px,2vmin,14px);border:1px solid var(--cu);border-radius:clamp(4px,1vmin,8px)}
+.ams-body{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));grid-auto-rows:auto;align-content:start;gap:clamp(6px,1.5vw,14px);min-height:0}
+.unit{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:clamp(4px,1vmin,8px);padding:clamp(6px,2vmin,14px);border:1px solid var(--cu);border-radius:clamp(4px,1vmin,8px);overflow:hidden}
 .ul{font-size:clamp(10px,2vmin,16px);color:var(--cm);text-align:center}
 .row{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(4px,2vmin,14px);width:100%}
 .tray{text-align:center}

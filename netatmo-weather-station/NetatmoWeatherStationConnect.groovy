@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.2.1
+ * Version: 0.3.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -33,7 +33,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.2.1" }
+private String appVersion() { return "0.3.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -984,6 +984,7 @@ private Map normalizeDeviceEntry(Map source, String stationId, String moduleId, 
         displayName: displayNameForDevice(stationName, moduleName, deviceClass),
         reachable: reachableFromSource(source),
         lastSeen: lastSeenFromSource(source),
+        lastMessage: lastMessageFromSource(source),
         measurementTime: measurementTimeFromSource(source),
         units: currentUnitLabels(),
         dashboard: normalizeDashboard(source.dashboard_data instanceof Map ? (Map)source.dashboard_data : [:]),
@@ -1000,8 +1001,12 @@ private Map normalizeDashboard(Map dashboard) {
         maxTemperatureTime: safeEpochSecondsAsString(dashboard.date_max_temp),
         humidity: numberValue(dashboard.Humidity),
         pressure: convertPressure(numberValue(dashboard.Pressure)),
+        absolutePressure: convertPressure(numberValue(dashboard.AbsolutePressure)),
         co2: numberValue(dashboard.CO2),
         noise: numberValue(dashboard.Noise),
+        soundPressureLevel: numberValue(dashboard.Noise),
+        healthIndex: numberValue(dashboard.health_idx),
+        healthStatus: healthStatusFromIndex(numberValue(dashboard.health_idx)),
         rain: convertRain(numberValue(dashboard.Rain)),
         rainLastHour: convertRain(numberValue(dashboard.sum_rain_1)),
         rainToday: convertRain(numberValue(dashboard.sum_rain_24)),
@@ -1023,8 +1028,14 @@ private Map normalizeDashboard(Map dashboard) {
 private Map normalizeMetadata(Map source) {
     return [
         batteryPercent: numberValue(source.battery_percent),
+        batteryVp: numberValue(source.battery_vp),
         rfStatus: numberValue(source.rf_status),
-        wifiStatus: numberValue(source.wifi_status)
+        wifiStatus: numberValue(source.wifi_status),
+        firmware: numberValue(source.firmware),
+        dataTypes: dataTypesFromSource(source),
+        placeCity: placeStringFromSource(source, "city"),
+        placeAltitude: placeNumberFromSource(source, "altitude"),
+        placeTimezone: placeStringFromSource(source, "timezone")
     ]
 }
 
@@ -1268,11 +1279,15 @@ private Map diagnosticForRawDevice(Map rawDevice, Map normalized, String station
         reachable: normalizedDevice.reachable,
         lastSeen: normalizedDevice.lastSeen,
         measurementTime: normalizedDevice.measurementTime,
+        lastMessage: normalizedDevice.lastMessage,
         units: units,
+        rawDeviceKeys: rawDevice.keySet().collect { it as String }.sort(),
+        rawMetadataValues: diagnosticRawMetadataValues(rawDevice),
         rawDashboardKeys: rawDashboard.keySet().collect { it as String }.sort(),
         normalizedDashboardPresent: presentKeys(dashboard),
         normalizedDashboardValues: diagnosticDashboardValues(dashboard, units),
         normalizedMetadataPresent: presentKeys(metadata),
+        normalizedMetadataValues: diagnosticMetadataValues(metadata),
         expectedDashboardFields: expected.dashboard,
         expectedMetadataFields: expected.metadata,
         missingDashboardFields: missingKeys(dashboard, expected.dashboard),
@@ -1283,15 +1298,15 @@ private Map diagnosticForRawDevice(Map rawDevice, Map normalized, String station
 private Map expectedFieldsForDeviceClass(String deviceClass) {
     switch (deviceClass) {
         case "base":
-            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "pressure", "co2", "noise", "tempTrend", "pressureTrend"], metadata: ["wifiStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "pressure", "absolutePressure", "co2", "noise", "soundPressureLevel", "tempTrend", "pressureTrend"], metadata: ["wifiStatus", "firmware"]]
         case "outdoor":
-            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "tempTrend"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         case "indoor":
-            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "co2", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "co2", "tempTrend"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         case "rain":
-            return [dashboard: ["rain", "rainLastHour", "rainToday"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["rain", "rainLastHour", "rainToday"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         case "wind":
-            return [dashboard: ["windStrength", "windAngle", "windDirection", "gustStrength", "gustAngle", "gustDirection", "maxWindStrength", "maxWindAngle", "maxWindDirection", "dateMaxWindStrength"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["windStrength", "windAngle", "windDirection", "gustStrength", "gustAngle", "gustDirection", "maxWindStrength", "maxWindAngle", "maxWindDirection", "dateMaxWindStrength"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         default:
             return [dashboard: [], metadata: []]
     }
@@ -1308,6 +1323,7 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
         minTemperature: units.temperature,
         maxTemperature: units.temperature,
         pressure: units.pressure,
+        absolutePressure: units.pressure,
         rain: units.rain,
         rainLastHour: units.rain,
         rainToday: units.rain,
@@ -1317,6 +1333,7 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
         humidity: "%",
         co2: "ppm",
         noise: "dB",
+        soundPressureLevel: "dB",
         windAngle: "degrees",
         gustAngle: "degrees",
         maxWindAngle: "degrees"
@@ -1325,6 +1342,38 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
     (dashboard ?: [:]).findAll { key, value -> value != null }.keySet().collect { it as String }.sort().each { key ->
         String unit = unitByField[key]
         values << "${key}=${dashboard[key]}${unit ? ' ' + unit : ''}"
+    }
+    return values
+}
+
+private List diagnosticMetadataValues(Map metadata) {
+    List values = []
+    Map unitByField = [
+        batteryPercent: "%",
+        placeAltitude: "m"
+    ]
+
+    (metadata ?: [:]).findAll { key, value -> value != null }.keySet().collect { it as String }.sort().each { key ->
+        String unit = unitByField[key]
+        values << "${key}=${metadata[key]}${unit ? ' ' + unit : ''}"
+    }
+    return values
+}
+
+private List diagnosticRawMetadataValues(Map rawDevice) {
+    List keys = ["battery_percent", "battery_vp", "rf_status", "wifi_status", "firmware", "last_message", "last_seen", "reachable", "data_type"]
+    List values = []
+    keys.each { key ->
+        if (rawDevice?.containsKey(key) && rawDevice[key] != null) {
+            values << "${key}=${rawDevice[key]}"
+        }
+    }
+
+    Map place = rawDevice?.place instanceof Map ? (Map)rawDevice.place : [:]
+    ["city", "altitude", "timezone"].each { key ->
+        if (place.containsKey(key) && place[key] != null) {
+            values << "place.${key}=${place[key]}"
+        }
     }
     return values
 }
@@ -1369,18 +1418,22 @@ private String fieldDiagnosticDisplayHtml(Map diagnostic) {
     String generated = diagnostic.generatedAt ? formatTimestamp(diagnostic.generatedAt) : "unknown"
     String html = "<p><strong>Available field diagnostic</strong><br>Generated: ${escapeHtml(generated)}</p>"
     html += "<p>Active unit preferences: ${escapeHtml(valueText(diagnostic.unitPreferences))}</p>"
-    html += "<p>lastSeen is module communication time. measurementTime is the timestamp of the latest dashboard reading.</p>"
+    html += "<p>lastSeen and lastMessage are module communication timestamps. measurementTime is the timestamp of the latest dashboard reading. Base stations may not provide lastSeen or lastMessage.</p>"
     devices.sort { a, b -> (a.displayName ?: "") <=> (b.displayName ?: "") }.each { device ->
         html += "<p><strong>${escapeHtml(device.displayName as String)}</strong><br>"
         html += "DNI: <code>${escapeHtml(device.dni as String)}</code><br>"
         html += "Type/Class: ${escapeHtml(device.moduleType as String)} / ${escapeHtml(device.deviceClass as String)}<br>"
         html += "Reachable: ${escapeHtml(valueText(device.reachable))}<br>"
-        html += "Last seen: ${escapeHtml(formatEpochSecondsForDisplay(device.lastSeen))}<br>"
+        html += "Last seen: ${escapeHtml(formatDiagnosticEpochSeconds(device, 'lastSeen'))}<br>"
+        html += "Last message: ${escapeHtml(formatDiagnosticEpochSeconds(device, 'lastMessage'))}<br>"
         html += "Measurement time: ${escapeHtml(valueText(device.measurementTime))}<br>"
+        html += "Raw device keys: ${escapeHtml(listText(device.rawDeviceKeys))}<br>"
+        html += "Raw metadata values: ${escapeHtml(listText(device.rawMetadataValues))}<br>"
         html += "Raw dashboard_data keys: ${escapeHtml(listText(device.rawDashboardKeys))}<br>"
         html += "Normalized dashboard values present: ${escapeHtml(listText(device.normalizedDashboardPresent))}<br>"
         html += "Normalized dashboard values: ${escapeHtml(listText(device.normalizedDashboardValues))}<br>"
         html += "Normalized metadata values present: ${escapeHtml(listText(device.normalizedMetadataPresent))}<br>"
+        html += "Normalized metadata values: ${escapeHtml(listText(device.normalizedMetadataValues))}<br>"
         html += "Expected dashboard fields: ${escapeHtml(listText(device.expectedDashboardFields))}<br>"
         html += "Expected metadata fields: ${escapeHtml(listText(device.expectedMetadataFields))}<br>"
         html += "Missing/null dashboard fields: ${escapeHtml(listText(device.missingDashboardFields))}<br>"
@@ -1411,6 +1464,15 @@ private String formatEpochSecondsForDisplay(Object value) {
     } catch (Exception e) {
         return value as String
     }
+}
+
+private String formatDiagnosticEpochSeconds(Map device, String key) {
+    Object value = device ? device[key] : null
+    if (value == null && device?.deviceClass == "base" && (key == "lastSeen" || key == "lastMessage")) {
+        return "Not provided"
+    }
+
+    return formatEpochSecondsForDisplay(value)
 }
 
 private List selectedDeviceDniList() {
@@ -1756,9 +1818,55 @@ private Long lastSeenFromSource(Map source) {
     return safeLong(source.last_seen)
 }
 
+private Long lastMessageFromSource(Map source) {
+    return safeLong(source.last_message)
+}
+
 private String measurementTimeFromSource(Map source) {
     Map dashboard = source.dashboard_data instanceof Map ? (Map)source.dashboard_data : [:]
     return safeEpochSecondsAsString(dashboard.time_utc)
+}
+
+private String healthStatusFromIndex(BigDecimal healthIndex) {
+    if (healthIndex == null) {
+        return null
+    }
+
+    switch (healthIndex as Integer) {
+        case 0:
+            return "healthy"
+        case 1:
+            return "fine"
+        case 2:
+            return "fair"
+        case 3:
+            return "poor"
+        case 4:
+            return "unhealthy"
+        default:
+            return "unknown"
+    }
+}
+
+private List dataTypesFromSource(Map source) {
+    if (!(source?.data_type instanceof List)) {
+        return null
+    }
+
+    List values = ((List)source.data_type).collect { stringValue(it) }.findAll { it != null }
+    return values ?: null
+}
+
+private Map placeFromSource(Map source) {
+    return source?.place instanceof Map ? (Map)source.place : [:]
+}
+
+private String placeStringFromSource(Map source, String key) {
+    return stringValue(placeFromSource(source)[key])
+}
+
+private BigDecimal placeNumberFromSource(Map source, String key) {
+    return numberValue(placeFromSource(source)[key])
 }
 
 private String buildApiUrl(String path) {

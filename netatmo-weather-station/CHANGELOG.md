@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] - 2026-06-18
+
+Added:
+
+- Exposed Netatmo `AbsolutePressure` as `absolutePressure` on the base station.
+- Exposed Netatmo `Noise` through Hubitat's standard `soundPressureLevel` event on the base station, while keeping the existing `noise` event.
+- Added `lastMessage` timestamp support from Netatmo `last_message`.
+- Added battery voltage, firmware, and Netatmo data type metadata where Netatmo provides it.
+- Added non-sensitive station place metadata for the base station: city, altitude, and timezone.
+- Added optional Netatmo health index/status fields where Netatmo provides `health_idx`.
+- Expanded field diagnostics to show selected raw metadata values and normalized metadata values.
+- Base stations now report `lastSeen` and `lastMessage` as `Not provided` when Netatmo omits those communication timestamps.
+
 ## [0.2.1] - 2026-06-18
 
 Changed:

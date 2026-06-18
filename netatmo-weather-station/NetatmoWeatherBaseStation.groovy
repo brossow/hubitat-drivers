@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Base Station - Hubitat Driver
- * Version: 0.2.0
+ * Version: 0.3.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -21,18 +21,28 @@ metadata {
         capability "RelativeHumidityMeasurement"
         capability "CarbonDioxideMeasurement"
         capability "PressureMeasurement"
+        capability "SoundPressureLevel"
 
         attribute "noise", "number"
+        attribute "absolutePressure", "number"
         attribute "minTemperature", "number"
         attribute "maxTemperature", "number"
         attribute "minTemperatureTime", "string"
         attribute "maxTemperatureTime", "string"
+        attribute "healthIndex", "number"
+        attribute "healthStatus", "string"
         attribute "wifiStatus", "number"
         attribute "reachable", "string"
         attribute "lastSeen", "string"
+        attribute "lastMessage", "string"
         attribute "measurementTime", "string"
         attribute "temperatureTrend", "string"
         attribute "pressureTrend", "string"
+        attribute "firmware", "number"
+        attribute "dataTypes", "string"
+        attribute "placeCity", "string"
+        attribute "placeAltitude", "number"
+        attribute "placeTimezone", "string"
         attribute "lastUpdated", "string"
         attribute "stationName", "string"
         attribute "moduleName", "string"
@@ -77,16 +87,27 @@ def updatedFromParent(Map data) {
     sendEventIfPresent("humidity", dashboard.humidity, "%")
     sendEventIfPresent("carbonDioxide", dashboard.co2, "ppm")
     sendEventIfPresent("pressure", dashboard.pressure, units.pressure ?: "mbar")
+    sendEventIfPresent("absolutePressure", dashboard.absolutePressure, units.pressure ?: "mbar")
     sendEventIfPresent("noise", dashboard.noise, "dB")
+    sendEventIfPresent("soundPressureLevel", dashboard.soundPressureLevel, "dB")
+    sendEventIfPresent("healthIndex", dashboard.healthIndex)
+    sendEventIfPresent("healthStatus", dashboard.healthStatus)
     sendEventIfPresent("wifiStatus", metadata.wifiStatus)
+    sendEventIfPresent("firmware", metadata.firmware)
+    sendEventIfPresent("dataTypes", joinListValue(metadata.dataTypes))
+    sendEventIfPresent("placeCity", metadata.placeCity)
+    sendEventIfPresent("placeAltitude", metadata.placeAltitude, "m")
+    sendEventIfPresent("placeTimezone", metadata.placeTimezone)
     sendEventIfPresent("temperatureTrend", dashboard.tempTrend)
     sendEventIfPresent("pressureTrend", dashboard.pressureTrend)
     sendEventIfPresent("reachable", data.reachable == null ? null : data.reachable.toString())
     sendEventIfPresent("stationName", data.stationName)
     sendEventIfPresent("moduleName", data.moduleName)
 
-    String lastSeenValue = formatEpochSeconds(data.lastSeen)
-    sendEventIfPresent("lastSeen", lastSeenValue)
+    String lastSeenValue = formatEpochSeconds(data.lastSeen) ?: "Not provided"
+    sendEvent(name: "lastSeen", value: lastSeenValue)
+    String lastMessageValue = formatEpochSeconds(data.lastMessage) ?: "Not provided"
+    sendEvent(name: "lastMessage", value: lastMessageValue)
     sendEventIfPresent("measurementTime", data.measurementTime)
     sendEvent(name: "lastUpdated", value: formatNow())
 }
@@ -105,6 +126,16 @@ private void sendEventIfPresent(String name, Object value, String unit = null) {
 
 private String temperatureUnit() {
     return location?.temperatureScale ?: "F"
+}
+
+private String joinListValue(Object value) {
+    if (value == null) {
+        return null
+    }
+    if (value instanceof List) {
+        return value.collect { it as String }.join(", ")
+    }
+    return value as String
 }
 
 private String formatEpochSeconds(Object value) {

@@ -26,6 +26,8 @@ The integration uses Netatmo's cloud API with OAuth authentication. The parent H
 - App-level unit preferences
 - Measurement timestamp support
 - Daily minimum/maximum temperature values where Netatmo provides them
+- Additional Netatmo metadata such as firmware, last message time, battery voltage, and non-sensitive station place details
+- Standard Hubitat sound pressure level support for base station noise readings
 
 ## Requirements
 
@@ -54,7 +56,7 @@ Manual installation:
 3. In Hubitat, open **Apps Code**.
 4. Add and save `NetatmoWeatherStationConnect.groovy`.
 5. Enable OAuth for the app in Hubitat Apps Code if Hubitat does not enable it automatically.
-6. Open **Apps**, choose **Add User App**, and add **Netatmo Weather Station Connect**.
+6. Open **Integrations**, choose **Add User App**, and add **Netatmo Weather Station Connect**.
 
 ## Netatmo Developer App Setup
 
@@ -81,7 +83,7 @@ The Netatmo token generator is not needed for this integration. Hubitat handles 
 
 1. Enter the Netatmo client ID and client secret.
 2. Click **Done** to save the credentials.
-3. Reopen the parent app.
+3. Reopen **Netatmo Weather Station Connect** from **Integrations**.
 4. Use the authorization link to authorize with Netatmo.
 5. Return to the Hubitat app page after authorization and refresh the page if needed.
 6. Run **Test getstationsdata** to confirm Netatmo API access.
@@ -112,13 +114,27 @@ Netatmo source values are normalized and converted in the parent app before valu
 
 ## Timestamps
 
-The integration exposes three different timestamps:
+The integration exposes four different timestamps:
 
 - `lastSeen`: when Netatmo last heard from the module, from Netatmo `last_seen`
 - `measurementTime`: timestamp of the latest Netatmo dashboard reading, from `dashboard_data.time_utc`
+- `lastMessage`: timestamp of the latest Netatmo message from the module, from Netatmo `last_message`
 - `lastUpdated`: when the Hubitat child device was updated by this integration
 
-Stale or unreachable modules may have `lastSeen` metadata while missing current dashboard fields and `measurementTime`.
+Stale or unreachable modules may have `lastSeen` or `lastMessage` metadata while missing current dashboard fields and `measurementTime`.
+For base stations, Netatmo may not provide useful `last_seen` or `last_message` data; the base station driver reports those attributes as `Not provided` when the fields are absent.
+
+## Exposed Fields
+
+The parent app normalizes Netatmo API data before sending values to child devices. Drivers skip missing values, so stale or unreachable modules keep their last known Hubitat values instead of being cleared by an incomplete API response.
+
+Base station devices expose temperature, humidity, CO2, pressure, absolute pressure, noise, sound pressure level, Wi-Fi status, daily minimum/maximum temperature values, measurement timestamps, firmware, data types, and non-sensitive station place details where Netatmo provides them.
+
+Outdoor and additional indoor modules expose their measurement values, RF status, battery percentage, battery voltage, firmware, data types, daily minimum/maximum temperature values, and timestamps where Netatmo provides them.
+
+Rain and wind gauges expose their measurement values, RF status, battery percentage, battery voltage, firmware, data types, and timestamps where Netatmo provides them. Rain and wind values depend on what Netatmo returns for active and reachable modules.
+
+The base station uses Hubitat's standard `SoundPressureLevel` capability for Netatmo's numeric `Noise` value. It does not create a threshold-based sound detected/not detected event.
 
 ## Diagnostics
 
@@ -128,6 +144,7 @@ Diagnostics show:
 
 - Device name, type, class, and DNI
 - Reachability and timestamp information
+- Selected raw device and metadata keys
 - Raw `dashboard_data` keys present in Netatmo's response
 - Normalized dashboard values after unit conversion
 - Normalized metadata fields
@@ -174,7 +191,7 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 
 ### Devices Do Not Appear After Installation
 
-- Open **Apps** and create/open the **Netatmo Weather Station Connect** parent app.
+- Open **Integrations** and create/open **Netatmo Weather Station Connect**.
 - Enter the Netatmo client ID and client secret, then click **Done**.
 - Reopen the app and authorize Netatmo.
 - Run **Refresh station discovery**.
@@ -184,7 +201,7 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 
 ### Scheduled Polling Stops Updating Devices
 
-- Open the **Netatmo Weather Station Connect** parent app and check the Polling section.
+- Open **Netatmo Weather Station Connect** from **Integrations** and check the Polling section.
 - Click **Run poll now** to confirm the API and child update path still works.
 - Click **Reschedule polling** to refresh Hubitat's scheduled job.
 - Click **Done** after changing the poll interval or after package updates.
@@ -199,7 +216,7 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 
 ### Stale or Unreachable Modules
 
-- Check `reachable`, `lastSeen`, and `measurementTime`.
+- Check `reachable`, `lastSeen`, `lastMessage`, and `measurementTime`.
 - `lastSeen` may show the last module communication time even when current dashboard values are absent.
 - `measurementTime` is present only when Netatmo returns a dashboard reading timestamp.
 

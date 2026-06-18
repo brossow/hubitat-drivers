@@ -80,18 +80,23 @@ The Netatmo token generator is not needed for this integration. Hubitat handles 
 ## Setup In Hubitat
 
 1. Enter the Netatmo client ID and client secret.
-2. Use the authorization link to authorize with Netatmo.
-3. Return to the Hubitat app page after authorization and refresh the page if needed.
-4. Run **Test getstationsdata** to confirm Netatmo API access.
-5. Run **Refresh station discovery**.
-6. Select the devices you want Hubitat to manage.
-7. Run **Create/update selected supported devices**.
-8. Choose the poll interval.
-9. Choose app-level unit preferences.
+2. Click **Done** to save the credentials.
+3. Reopen the parent app.
+4. Use the authorization link to authorize with Netatmo.
+5. Return to the Hubitat app page after authorization and refresh the page if needed.
+6. Run **Test getstationsdata** to confirm Netatmo API access.
+7. Run **Refresh station discovery**.
+8. Select the devices you want Hubitat to manage.
+9. Run **Create/update selected supported devices**.
+10. Choose the poll interval.
+11. Choose app-level unit preferences.
+12. Click **Done** after setup changes so Hubitat saves the settings and schedules polling.
 
 Polling updates existing selected child devices. It does not create child devices automatically; use the manual create/update action for child creation.
 
-Use **Run poll now** to verify polling immediately after changing the poll interval or saving the app.
+Installing the package does not create devices by itself. Child devices are created only after authorization, discovery, selecting modules, and running **Create/update selected supported devices**.
+
+Use **Run poll now** to verify the data path immediately after changing the poll interval or saving the app. Use **Reschedule polling** if the app reports that scheduled polling appears stale.
 
 ## Unit Preferences
 
@@ -166,6 +171,24 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 - Run **Create/update selected supported devices**.
 - Confirm the matching driver is installed and saved before running sync.
 - Check Hubitat logs for child creation warnings.
+
+### Devices Do Not Appear After Installation
+
+- Open **Apps** and create/open the **Netatmo Weather Station Connect** parent app.
+- Enter the Netatmo client ID and client secret, then click **Done**.
+- Reopen the app and authorize Netatmo.
+- Run **Refresh station discovery**.
+- Select the modules you want.
+- Run **Create/update selected supported devices**.
+- Child devices appear only after the selected-device sync succeeds.
+
+### Scheduled Polling Stops Updating Devices
+
+- Open the **Netatmo Weather Station Connect** parent app and check the Polling section.
+- Click **Run poll now** to confirm the API and child update path still works.
+- Click **Reschedule polling** to refresh Hubitat's scheduled job.
+- Click **Done** after changing the poll interval or after package updates.
+- Check Hubitat logs if the app reports a polling error.
 
 ### Missing Rain or Wind Fields
 

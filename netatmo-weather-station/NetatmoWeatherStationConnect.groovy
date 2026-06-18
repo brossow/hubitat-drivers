@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.2.0
+ * Version: 0.2.1
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -33,7 +33,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.2.0" }
+private String appVersion() { return "0.2.1" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -66,6 +66,7 @@ def mainPage() {
     migrateNetatmoTokenState()
     Boolean endpointOauthReady = ensureEndpointAccessToken()
     String authorizationUrl = endpointOauthReady && credentialsConfigured() ? buildAuthorizeUrl() : ""
+    repairStalePollingIfNeeded()
 
     return dynamicPage(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true) {
         section("Netatmo API Credentials") {
@@ -223,6 +224,13 @@ def mainPage() {
                 input name: "runPollNow",
                     type: "button",
                     title: "Run poll now"
+                input name: "reschedulePolling",
+                    type: "button",
+                    title: "Reschedule polling"
+            }
+            String healthWarning = pollHealthWarningText()
+            if (healthWarning) {
+                paragraph healthWarning
             }
             paragraph pollStatusText()
         }
@@ -267,6 +275,11 @@ def appButtonHandler(String buttonName) {
 
     if (buttonName == "runPollNow") {
         poll()
+        return
+    }
+
+    if (buttonName == "reschedulePolling") {
+        reschedulePolling("Manual reschedule requested from the app page.")
         return
     }
 
@@ -326,11 +339,25 @@ String pollStatusText() {
     if (state.lastPollStatus) {
         String timestamp = state.lastPollAt ? " Last poll ${formatTimestamp(state.lastPollAt)}." : ""
         String scheduled = !state.lastPollAt && state.pollScheduledAt ? " Scheduled ${formatTimestamp(state.pollScheduledAt)}." : ""
+        String rescheduled = state.pollRescheduledAt ? " Last rescheduled ${formatTimestamp(state.pollRescheduledAt)}." : ""
         String message = state.lastPollMessage ? " ${state.lastPollMessage}" : ""
-        return "${configured} Last status: ${state.lastPollStatus}.${message}${timestamp}${scheduled}"
+        return "${configured} Last status: ${state.lastPollStatus}.${message}${timestamp}${scheduled}${rescheduled}"
     }
 
     return interval == "Disabled" ? configured : "${configured} Waiting for Hubitat to schedule the first poll. Click Done after changing the interval."
+}
+
+String pollHealthWarningText() {
+    if (pollingDisabled() || state.netatmoAuthenticated != true || !selectedDeviceDniList()) {
+        return ""
+    }
+
+    Long staleSince = pollingStaleSince()
+    if (!staleSince) {
+        return ""
+    }
+
+    return "Warning: scheduled polling appears stale. Last expected activity was ${formatTimestamp(staleSince)}. Click Run poll now to test the data path, or Reschedule polling to refresh the Hubitat schedule."
 }
 
 Map pollIntervalOptions() {
@@ -658,6 +685,18 @@ void syncSelectedSupportedDevices() {
 }
 
 void poll() {
+    try {
+        pollInternal()
+    } catch (Exception e) {
+        state.lastPollAt = now()
+        state.lastPollStatus = "Error"
+        state.lastPollMessage = "Unexpected polling failure: ${exceptionSummary(e)}"
+        log.error "Netatmo poll failed unexpectedly: ${exceptionSummary(e)}"
+        debugLog "Netatmo poll exception details: ${e}"
+    }
+}
+
+private void pollInternal() {
     if (state.netatmoAuthenticated != true) {
         state.lastPollAt = now()
         state.lastPollStatus = "Skipped"
@@ -1521,6 +1560,7 @@ private void schedulePolling() {
     String interval = settings.pollIntervalMinutes ?: "5"
     if (interval == "Disabled") {
         state.remove("pollScheduledAt")
+        state.remove("pollRescheduledAt")
         state.lastPollStatus = state.lastPollStatus ?: "Disabled"
         state.lastPollMessage = "Scheduled polling is disabled."
         debugLog "Netatmo scheduled polling disabled"
@@ -1547,6 +1587,7 @@ private void schedulePolling() {
             default:
                 log.warn "Unsupported Netatmo poll interval ${interval}; scheduled polling disabled"
                 state.remove("pollScheduledAt")
+                state.remove("pollRescheduledAt")
                 state.lastPollStatus = "Disabled"
                 state.lastPollMessage = "Unsupported poll interval ${interval}."
                 return
@@ -1561,8 +1602,91 @@ private void schedulePolling() {
         log.error "Failed to schedule Netatmo polling: ${exceptionSummary(e)}"
         debugLog "Netatmo polling schedule exception details: ${e}"
         state.remove("pollScheduledAt")
+        state.remove("pollRescheduledAt")
         state.lastPollStatus = "Error"
         state.lastPollMessage = "Failed to schedule polling."
+    }
+}
+
+private void reschedulePolling(String reason = null) {
+    try {
+        unschedule("poll")
+    } catch (Exception e) {
+        log.warn "Could not clear existing Netatmo poll schedule before rescheduling: ${exceptionSummary(e)}"
+        debugLog "Netatmo unschedule poll exception details: ${e}"
+    }
+
+    schedulePolling()
+
+    if (!pollingDisabled()) {
+        state.pollRescheduledAt = now()
+        state.lastPollStatus = "Scheduled"
+        state.lastPollMessage = reason ?: "Polling schedule refreshed. Waiting for next scheduled run."
+        log.info "Netatmo polling schedule refreshed${reason ? ': ' + reason : ''}"
+    }
+}
+
+private void repairStalePollingIfNeeded() {
+    if (pollingDisabled() || state.netatmoAuthenticated != true || !selectedDeviceDniList()) {
+        return
+    }
+
+    Long staleSince = pollingStaleSince()
+    if (!staleSince) {
+        return
+    }
+
+    Long lastRepair = state.pollRescheduledAt instanceof Number ? (state.pollRescheduledAt as Long) : null
+    Long threshold = pollStaleThresholdMs()
+    if (lastRepair && (now() - lastRepair) < threshold) {
+        return
+    }
+
+    reschedulePolling("Polling schedule was refreshed because the last expected poll appeared stale.")
+}
+
+private Boolean pollingDisabled() {
+    return (settings.pollIntervalMinutes ?: "5") == "Disabled"
+}
+
+private Long pollingStaleSince() {
+    Long threshold = pollStaleThresholdMs()
+    if (threshold == null) {
+        return null
+    }
+
+    Long lastPoll = state.lastPollAt instanceof Number ? (state.lastPollAt as Long) : null
+    Long scheduledAt = state.pollScheduledAt instanceof Number ? (state.pollScheduledAt as Long) : null
+    Long rescheduledAt = state.pollRescheduledAt instanceof Number ? (state.pollRescheduledAt as Long) : null
+    Long reference = [lastPoll, scheduledAt, rescheduledAt].findAll { it != null }.max()
+    if (!reference) {
+        return now()
+    }
+
+    return (now() - reference) > threshold ? reference : null
+}
+
+private Long pollStaleThresholdMs() {
+    Integer minutes = pollIntervalMinutesAsInteger()
+    if (minutes == null) {
+        return null
+    }
+
+    Integer thresholdMinutes = (minutes * 2) + 5
+    return thresholdMinutes * 60L * 1000L
+}
+
+private Integer pollIntervalMinutesAsInteger() {
+    String interval = settings.pollIntervalMinutes ?: "5"
+    if (interval == "Disabled") {
+        return null
+    }
+
+    try {
+        return interval as Integer
+    } catch (Exception e) {
+        debugLog "Could not parse Netatmo poll interval ${interval}: ${exceptionSummary(e)}"
+        return null
     }
 }
 

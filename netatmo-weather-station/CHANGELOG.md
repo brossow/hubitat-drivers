@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1] - 2026-06-18
+
+Changed:
+
+- Added scheduled-poll stale detection in the parent app UI.
+- Added **Reschedule polling** action to refresh Hubitat's scheduled poll job.
+- Wrapped scheduled polling in top-level error handling so unexpected failures update app status instead of failing silently.
+- Clarified setup documentation, including that package installation alone does not create child devices.
+
 ## [0.2.0] - 2026-04-25
 
 Added:

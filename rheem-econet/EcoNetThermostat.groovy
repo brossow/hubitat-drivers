@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.1.2
+ * Version: 0.1.3
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.clearblade.com.
@@ -50,6 +50,8 @@ metadata {
         input name: "pollInterval", type: "enum",    title: "Poll interval",
               options: ["1 minute", "5 minutes", "10 minutes", "15 minutes", "30 minutes", "1 hour"],
               defaultValue: "5 minutes", required: true
+        input name: "tempUnit",    type: "enum",     title: "Temperature unit",
+              options: ["F", "C"], defaultValue: "F", required: true
         input name: "logEnable",   type: "bool",     title: "Enable debug logging", defaultValue: false
     }
 }
@@ -240,16 +242,18 @@ void parseLocations(List locations) {
 }
 
 void updateAttributes(Map equip) {
+    def unit = "°${settings.tempUnit ?: 'F'}"
+
     // Current temperature (ambient reading from thermostat sensor)
     def currentTemp = equip["@SETPOINT"]?.value
-    if (currentTemp != null) sendEvent(name: "temperature", value: currentTemp, unit: "°F")
+    if (currentTemp != null) sendEvent(name: "temperature", value: toDisplayTemp(currentTemp as Integer), unit: unit)
 
     // Target setpoints
     def coolSP = equip["@COOLSETPOINT"]?.value
-    if (coolSP != null) sendEvent(name: "coolingSetpoint", value: coolSP, unit: "°F")
+    if (coolSP != null) sendEvent(name: "coolingSetpoint", value: toDisplayTemp(coolSP as Integer), unit: unit)
 
     def heatSP = equip["@HEATSETPOINT"]?.value
-    if (heatSP != null) sendEvent(name: "heatingSetpoint", value: heatSP, unit: "°F")
+    if (heatSP != null) sendEvent(name: "heatingSetpoint", value: toDisplayTemp(heatSP as Integer), unit: unit)
 
     // HVAC mode
     def modeIndex   = equip["@MODE"]?.value
@@ -270,16 +274,16 @@ void updateAttributes(Map equip) {
     // thermostatSetpoint — the active target temperature based on current mode
     if (hubMode == "heat" || hubMode == "emergency heat") {
         def hSP = equip["@HEATSETPOINT"]?.value
-        if (hSP != null) sendEvent(name: "thermostatSetpoint", value: hSP, unit: "°F")
+        if (hSP != null) sendEvent(name: "thermostatSetpoint", value: toDisplayTemp(hSP as Integer), unit: unit)
     } else if (hubMode == "cool") {
         def cSP = equip["@COOLSETPOINT"]?.value
-        if (cSP != null) sendEvent(name: "thermostatSetpoint", value: cSP, unit: "°F")
+        if (cSP != null) sendEvent(name: "thermostatSetpoint", value: toDisplayTemp(cSP as Integer), unit: unit)
     } else if (hubMode == "auto") {
         // Report midpoint of heat/cool setpoints as a single reference value
         def hSP = equip["@HEATSETPOINT"]?.value
         def cSP = equip["@COOLSETPOINT"]?.value
         if (hSP != null && cSP != null) {
-            sendEvent(name: "thermostatSetpoint", value: Math.round((hSP + cSP) / 2), unit: "°F")
+            sendEvent(name: "thermostatSetpoint", value: toDisplayTemp(Math.round((hSP + cSP) / 2) as Integer), unit: unit)
         }
     }
 
@@ -358,48 +362,54 @@ def setThermostatMode(String hubMode) {
 
 def setHeatingSetpoint(BigDecimal temp) {
     logDebug "setHeatingSetpoint(${temp})"
-    def lo = state.heatSpLow as BigDecimal ?: 40
-    def hi = state.heatSpHigh as BigDecimal ?: 90
+    def unit = "°${settings.tempUnit ?: 'F'}"
+    def lo = toDisplayTemp(state.heatSpLow as Integer ?: 40)
+    def hi = toDisplayTemp(state.heatSpHigh as Integer ?: 90)
     if (temp < lo || temp > hi) {
-        log.error "Heating setpoint ${temp}°F out of range [${lo}–${hi}]"
+        log.error "Heating setpoint ${temp}${unit} out of range [${lo}–${hi}]"
         return
     }
-    def payload = ["@HEATSETPOINT": temp.intValue()]
-    // In auto mode, also enforce the deadband against the cool setpoint
+    // All API communication in Fahrenheit; deadband enforcement in Fahrenheit
+    def tempF   = toFahrenheit(temp).intValue()
+    def payload = ["@HEATSETPOINT": tempF]
     def currentMode = device.currentValue("thermostatMode")
     if (currentMode == "auto") {
         def deadband = (state.deadband as Integer) ?: 2
-        def coolSP = device.currentValue("coolingSetpoint") as Integer
-        if (coolSP != null && temp.intValue() > coolSP - deadband) {
-            payload["@COOLSETPOINT"] = temp.intValue() + deadband
-            sendEvent(name: "coolingSetpoint", value: temp.intValue() + deadband, unit: "°F")
+        def coolSPF  = toFahrenheit(device.currentValue("coolingSetpoint") as BigDecimal ?: 0).intValue()
+        if (tempF > coolSPF - deadband) {
+            def newCoolF = tempF + deadband
+            payload["@COOLSETPOINT"] = newCoolF
+            sendEvent(name: "coolingSetpoint", value: toDisplayTemp(newCoolF), unit: unit)
         }
     }
     publishCommand(payload)
-    sendEvent(name: "heatingSetpoint", value: temp, unit: "°F")
+    sendEvent(name: "heatingSetpoint", value: temp, unit: unit)
 }
 
 def setCoolingSetpoint(BigDecimal temp) {
     logDebug "setCoolingSetpoint(${temp})"
-    def lo = state.coolSpLow as BigDecimal ?: 60
-    def hi = state.coolSpHigh as BigDecimal ?: 99
+    def unit = "°${settings.tempUnit ?: 'F'}"
+    def lo = toDisplayTemp(state.coolSpLow as Integer ?: 60)
+    def hi = toDisplayTemp(state.coolSpHigh as Integer ?: 99)
     if (temp < lo || temp > hi) {
-        log.error "Cooling setpoint ${temp}°F out of range [${lo}–${hi}]"
+        log.error "Cooling setpoint ${temp}${unit} out of range [${lo}–${hi}]"
         return
     }
-    def payload = ["@COOLSETPOINT": temp.intValue()]
-    // In auto mode, also enforce the deadband against the heat setpoint
+    // All API communication in Fahrenheit; deadband enforcement in Fahrenheit
+    def tempF   = toFahrenheit(temp).intValue()
+    def payload = ["@COOLSETPOINT": tempF]
     def currentMode = device.currentValue("thermostatMode")
     if (currentMode == "auto") {
         def deadband = (state.deadband as Integer) ?: 2
-        def heatSP = device.currentValue("heatingSetpoint") as Integer
-        if (heatSP != null && temp.intValue() < heatSP + deadband) {
-            payload["@HEATSETPOINT"] = temp.intValue() - deadband
-            sendEvent(name: "heatingSetpoint", value: temp.intValue() - deadband, unit: "°F")
+        def heatSPF  = toFahrenheit(device.currentValue("heatingSetpoint") as BigDecimal ?: 0).intValue()
+        if (tempF < heatSPF + deadband) {
+            def newHeatF = tempF - deadband
+            payload["@HEATSETPOINT"] = newHeatF
+            sendEvent(name: "heatingSetpoint", value: toDisplayTemp(newHeatF), unit: unit)
         }
     }
     publishCommand(payload)
-    sendEvent(name: "coolingSetpoint", value: temp, unit: "°F")
+    sendEvent(name: "coolingSetpoint", value: temp, unit: unit)
 }
 
 def setThermostatFanMode(String hubFanMode) {
@@ -549,6 +559,20 @@ def authedHeaders() {
     def h = baseHeaders()
     h["ClearBlade-UserToken"] = state.userToken
     return h
+}
+
+def toDisplayTemp(Number fahrenheit) {
+    if (settings.tempUnit == "C") {
+        return (((fahrenheit - 32) * 5 / 9) as BigDecimal).setScale(1, BigDecimal.ROUND_HALF_UP)
+    }
+    return fahrenheit as BigDecimal
+}
+
+def toFahrenheit(Number temp) {
+    if (settings.tempUnit == "C") {
+        return (((temp * 9 / 5) + 32) as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
+    }
+    return temp as BigDecimal
 }
 
 /** Returns the index of the first item in list where closure returns true, or null. */

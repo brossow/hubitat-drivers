@@ -12,6 +12,12 @@ Device drivers for [Hubitat Elevation](https://hubitat.com) by [Brent Rossow](ht
 | [Rheem EcoNet](rheem-econet/) | Rheem EcoNet thermostats and water heaters |
 | [Xiaomi/Aqara Temperature & Humidity](xiaomi-aqara/) | Zigbee T&H sensors (WSDCGQ01LM, WSDCGQ11LM, Aqara T1, Keen Home) |
 
+## Related Projects
+
+| Project | Description |
+|---------|-------------|
+| [bambu-hubitat](https://github.com/brossow/bambu-hubitat) | Bambu Lab 3D printer → Hubitat integration. Kept as a separate repo since it ships a Python/Docker MQTT bridge alongside the Hubitat app and driver, rather than being a plain driver install. |
+
 ## Installation
 
 Each driver has its own README with an import URL for manual installation via **Drivers Code → New Driver → Import**, as well as a Hubitat Package Manager (HPM) listing.

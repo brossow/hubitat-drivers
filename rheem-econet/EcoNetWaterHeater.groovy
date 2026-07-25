@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.1.3
+ * Version: 0.2.0
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -56,8 +56,12 @@ metadata {
     preferences {
         input name: "email",        type: "text",     title: "EcoNet Email",     required: true
         input name: "password",     type: "password", title: "EcoNet Password",  required: true
-        input name: "deviceIndex",  type: "number",   title: "Water heater index (0 = first, 1 = second, …)",
-              defaultValue: 0, required: true
+        // Not "required" on purpose: on a new install there is no way to know a serial
+        // until the driver has connected once, so requiring it would block the first save.
+        // The driver fills it in itself — see adoptSelection().
+        input name: "deviceSerial", type: "text",
+              title: "Water heater serial number — leave blank to fill in automatically (see README for multiple water heaters)",
+              required: false
         input name: "tempUnit",     type: "enum",     title: "Temperature unit",
               options: ["F", "C"], defaultValue: "F", required: true
         input name: "pollInterval", type: "enum",     title: "Poll interval",
@@ -232,10 +236,13 @@ def fetchEquipment() {
 // ---------------------------------------------------------------------------
 void parseLocations(List locations) {
     def waterHeaters = []
+    def places       = []   // parallel to waterHeaters: location name for each, may be null
     locations.each { loc ->
+        def place = loc?.name ?: loc?.location_name
         loc?.equiptments?.each { equip ->   // NOTE: "equiptments" is a typo in the API
             if (equip?.device_type == "WH" && !equip?.error) {
                 waterHeaters << equip
+                places       << place
             }
         }
     }
@@ -245,14 +252,30 @@ void parseLocations(List locations) {
         return
     }
 
-    int idx = (settings.deviceIndex ?: 0) as int
-    if (idx >= waterHeaters.size()) {
-        log.warn "EcoNet WH: deviceIndex ${idx} out of range (${waterHeaters.size()} found) — using 0"
-        idx = 0
+    publishRoster(waterHeaters, places)
+
+    int idx = resolveIndex(waterHeaters)
+    if (idx < 0) {
+        // An explicit selection couldn't be honoured — never guess. Drop the cached
+        // identity too, so queued commands can't still reach the previous unit.
+        state.remove("deviceId")
+        state.remove("serialNumber")
+        return
     }
 
     def equip = waterHeaters[idx]
     logDebug "Water heater: ${equip["@NAME"]?.value}  id=${equip.device_name}  serial=${equip.serial_number}  type=${equip["@TYPE"]}"
+
+    if (!state.rosterLogged) {
+        state.rosterLogged = true
+        log.info "EcoNet WH: ${waterHeaters.size()} water heater(s) on this account — listed in the " +
+                 "waterHeater0…waterHeater${waterHeaters.size() - 1} state variables, under State Variables on the device's Commands tab."
+        if (waterHeaters.size() > 1) {
+            log.info "EcoNet WH: this Hubitat device controls ${state['waterHeater' + idx]}. Every other water " +
+                     "heater needs its own Hubitat device using this same driver, with that unit's serial number " +
+                     "set in its preferences."
+        }
+    }
 
     // Cache identity and device capabilities
     state.deviceId      = equip.device_name
@@ -265,6 +288,131 @@ void parseLocations(List locations) {
     state.setpointHigh  = equip["@SETPOINT"]?.constraints?.upperLimit
 
     updateAttributes(equip)
+}
+
+/**
+ * Publish one state variable per discovered water heater — waterHeater0, waterHeater1, …
+ *
+ * One unit per variable is deliberate. Hubitat renders a list-valued state variable
+ * as a single row, so a combined list invites the user to copy every water heater at
+ * once; a row per unit makes "copy the one you want" unambiguous.
+ */
+void publishRoster(List found, List places) {
+    found.eachWithIndex { w, i ->
+        def name  = w["@NAME"]?.value ?: w.device_name ?: "unnamed"
+        def where = places[i] ? " @ ${places[i]}" : ""
+        state["waterHeater${i}".toString()] = "${name}${where} — ${unitId(w)}".toString()
+    }
+
+    // Drop rows left over from units no longer on the account
+    for (int i = found.size(); i < 64; i++) {
+        def key = "waterHeater${i}".toString()
+        if (state[key] == null) break
+        state.remove(key)
+    }
+}
+
+/**
+ * The identifier a device is pinned to: the unit's serial number, or its ClearBlade
+ * device id when it doesn't report one. Every entry has a device id, so this always
+ * yields something stable to pin to.
+ */
+String unitId(def equip) {
+    return (equip?.serial_number ?: equip?.device_name)?.toString()
+}
+
+/** Strip punctuation and case so "03-01-A2", "03:01:a2" and "0301a2" all compare equal. */
+String normalizeSerial(def s) {
+    return s?.toString()?.replaceAll(/[^A-Za-z0-9]/, "")?.toLowerCase()
+}
+
+/**
+ * Decide which discovered water heater this device controls.
+ *
+ * Returns -1 when a serial number was configured but could not be honoured. The
+ * caller must then do nothing at all: a selection the user made explicitly must
+ * never silently degrade into "whichever water heater happens to be first".
+ */
+int resolveIndex(List found) {
+    def wanted = settings.deviceSerial?.trim()
+    if (!wanted) return adoptSelection(found)
+
+    def wantNorm = normalizeSerial(wanted)
+    def hits     = []
+    found.eachWithIndex { w, i ->
+        def n = normalizeSerial(unitId(w))
+        // Exact match, or the identifier found inside a whole row pasted in.
+        // Length-guarded so a short id can't match by coincidence.
+        if (n && (n == wantNorm || (n.length() >= 6 && wantNorm.contains(n)))) hits << i
+    }
+
+    if (hits.size() == 1) return hits[0] as int
+
+    if (hits.size() > 1) {
+        log.error "EcoNet WH: '${wanted}' matches ${hits.size()} water heaters — enter one serial number only, " +
+                  "not the contents of several rows. Not controlling any water heater until this is corrected."
+        return -1
+    }
+
+    // Nothing matched. Name the problem precisely rather than making the user guess.
+    def named = found.findIndexOf { w ->
+        ((w["@NAME"]?.value ?: w.device_name)?.toString()?.trim())?.equalsIgnoreCase(wanted)
+    }
+    if (named >= 0) {
+        log.error "EcoNet WH: '${wanted}' is a water heater's name, not its serial number. Use " +
+                  "${unitId(found[named])} instead. Not controlling any water heater until this is corrected."
+    } else {
+        log.error "EcoNet WH: no water heater on this account has serial '${wanted}'. Check the waterHeater0…" +
+                  "waterHeater${found.size() - 1} state variables, under State Variables on the device's Commands tab. Not controlling any " +
+                  "water heater until this is corrected."
+    }
+    return -1
+}
+
+/**
+ * Nothing is pinned yet. Choose a water heater and, where the choice isn't a guess,
+ * write its identifier into the serial preference so the device stays pinned.
+ *
+ * Two cases reach here:
+ *   - Upgrade from 0.1.x, which selected by a "Water heater index" preference. That
+ *     input is gone, but Hubitat keeps the saved value, so it is read once, turned
+ *     into a serial, and then deleted. The user's existing choice is preserved and
+ *     they never see the index again.
+ *   - A new install. With one water heater on the account there's nothing to choose,
+ *     so pin it. With several, pick the first but don't persist it — that would be
+ *     writing a guess into the user's configuration.
+ */
+int adoptSelection(List found) {
+    def legacyIndex = settings.deviceIndex
+    int idx = 0
+
+    if (legacyIndex != null) {
+        idx = legacyIndex as int
+        if (idx < 0 || idx >= found.size()) {
+            log.warn "EcoNet WH: saved water heater index ${idx} is out of range (${found.size()} found) — using the first"
+            idx = 0
+        }
+    }
+
+    if (legacyIndex != null || found.size() == 1) {
+        def id = unitId(found[idx])
+        if (id) {
+            device.updateSetting("deviceSerial", [value: id, type: "text"])
+            if (legacyIndex != null) {
+                device.removeSetting("deviceIndex")
+                log.info "EcoNet WH: upgraded — this device used water heater index ${idx} and is now pinned to " +
+                         "serial ${id}. The index preference has been retired and removed."
+            } else {
+                log.info "EcoNet WH: pinned this device to serial ${id}."
+            }
+        }
+        return idx
+    }
+
+    log.warn "EcoNet WH: ${found.size()} water heaters on this account and no serial number set — using the first " +
+             "(${unitId(found[0])}). Set the Water heater serial number preference to choose deliberately; " +
+             "each additional water heater needs its own Hubitat device using this driver."
+    return 0
 }
 
 void updateAttributes(Map equip) {

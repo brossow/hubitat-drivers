@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.2.0
+ * Version: 0.2.1
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.clearblade.com.
@@ -116,6 +116,13 @@ def updated() {
 def initialize() {
     logDebug "Initializing"
     state.clear()
+    // A freshly created device has no credentials yet, and nothing prompts the user
+    // for them — say where they go rather than sitting silent with no data.
+    if (!settings.email || !settings.password) {
+        log.warn "EcoNet: no credentials set. Open this device's Preferences tab, enter the EcoNet email and " +
+                 "password you use in the Rheem app, and click Save Preferences. There is no separate login prompt."
+        return
+    }
     schedulePoll()
     login()
 }
@@ -132,6 +139,10 @@ def refresh() {
 // Authentication  ——  POST /user/auth
 // ---------------------------------------------------------------------------
 def login() {
+    if (!settings.email || !settings.password) {
+        log.warn "EcoNet: no credentials set — enter your EcoNet email and password on this device's Preferences tab."
+        return
+    }
     logDebug "Authenticating as ${email}"
     def params = [
         uri        : "${REST_BASE}/user/auth",

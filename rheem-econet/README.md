@@ -15,12 +15,43 @@ Each driver is self-contained — no parent app required.
 
 ## Installation
 
-There is **no app to install** — this package is two standalone drivers. You create the Hubitat device yourself and point it at the driver.
+Two things to know before you start, because both surprise people:
+
+- **There is no app to install.** This package is two standalone drivers. Nothing appears under Apps, and nothing scans your account and creates devices for you — you add a device yourself and tell it which driver to use.
+- **You are never prompted for your EcoNet login.** There's no popup and no sign-in screen. Your email and password are settings you type into the device's own **Preferences** tab after the device exists (step 3 below). Until you do that, the device sits there with no data and a `?` for its status — which is what a missing login looks like.
+
+### 1. Install the driver code
+
+**Via HPM:** search for **Rheem EcoNet** in Hubitat Package Manager and install it. That's this step done — skip to step 2.
+
+**Manually:**
 
 1. In Hubitat, go to **Drivers Code → New Driver**
-2. Paste the contents of the desired `.groovy` file and click **Save**
-3. Go to **Devices → Add Device → Virtual**, give it a name, and select the driver type (`Rheem EcoNet Thermostat` or `Rheem EcoNet Water Heater`)
-4. Enter your EcoNet email and password in preferences and click **Save Preferences**
+2. Paste the entire contents of [`EcoNetThermostat.groovy`](EcoNetThermostat.groovy) into the editor and click **Save**
+3. If you also want the water heater driver, repeat with [`EcoNetWaterHeater.groovy`](EcoNetWaterHeater.groovy)
+
+Installing the driver code doesn't create anything you can see under Devices yet. It only makes the driver available to choose in the next step.
+
+### 2. Create the device
+
+1. Go to **Devices → Add Device**
+2. Choose **Virtual**
+3. From the device type list, select **Rheem EcoNet Thermostat** (or **Rheem EcoNet Water Heater**) and click **Next**
+4. Give the device a name — something like `EcoNet - Upstairs` — and click **Next**
+5. Pick a room and click **Next**, or click **Skip** if you'd rather not assign one
+
+The device now exists. Click **View device details** to open it.
+
+### 3. Enter your EcoNet credentials
+
+This is the step people miss, and nothing prompts you for it.
+
+1. On the device page, click the **Preferences** tab
+2. Enter your **EcoNet Email** and **EcoNet Password** — the same ones you use in the Rheem EcoNet mobile app
+3. Leave **Thermostat serial number** blank for now
+4. Click **Save Preferences**
+
+The driver logs in immediately and fills in temperature, mode and the rest within a few seconds. If nothing appears, open the **Logs** tab — a bad email or password is reported there, and it's the first place to look.
 
 That gives you one Hubitat device controlling one physical unit. If your EcoNet account has more than one, read the next section.
 
@@ -37,15 +68,18 @@ thermostat0    Upstairs — aa-bb-cc-dd-ee-ff-11-22-33
 thermostat1    Downstairs — aa-bb-cc-dd-ee-ff-44-55-66
 ```
 
-For each additional unit:
+Set up your **first** device exactly as in Installation above, leaving the serial blank, and let it connect. Then:
 
-1. Repeat installation steps 3–4 to create another Hubitat device using the **same driver**.
-2. Copy that unit's **serial number** out of its row above.
-3. Paste it into the new device's **Thermostat serial number** (or **Water heater serial number**) preference and click **Save Preferences**.
+1. Repeat installation steps **2 and 3** to create another Hubitat device using the **same driver**, with the same email and password.
+2. Copy the serial number of the unit you want that device to control, out of its row above.
+3. Paste it into that device's **Thermostat serial number** (or **Water heater serial number**) preference and click **Save Preferences**.
+4. **Go back to your first device and set its serial too**, using the row for the other unit.
 
 The format doesn't matter — `aa-bb-cc-dd-ee-ff-11-22-33`, `AA:BB:CC:DD:EE:FF:11:22:33`, and `aabbccddeeff112233` are all accepted, as is the whole row pasted in with the name still attached.
 
-You never have to type a serial for the *first* device. Leave the field blank and the driver fills it in the first time it connects, so every device ends up pinned whether or not you did anything.
+Step 4 matters, and it's easy to skip. **When there's more than one unit on the account, no device fills in its own serial.** The driver won't guess which one you meant and write that guess into your configuration, so until you set a serial every device falls back to the *first* unit — meaning two devices both controlling the same thermostat, which looks exactly like the second device being broken. Each one logs a warning saying so. Set the serial on every device and they'll sort themselves out.
+
+(If you only have one unit on your account, none of this applies — the driver fills the serial in for you on first connection and there's nothing to do.)
 
 ### Why the serial and not the name
 

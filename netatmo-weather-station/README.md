@@ -113,13 +113,14 @@ If it says *"Hubitat app OAuth is not enabled yet,"* you skipped step 5 of [Inst
 2. You should see *"Netatmo authorization succeeded."* Close that tab and return to the integration page in Hubitat, then refresh it.
 
    If you see *"Netatmo authorization failed"* instead, the page now tells you what to do about it. `redirect_uri_mismatch` is the most common one — see [Troubleshooting](#netatmo-returned-redirect_uri_mismatch).
-3. The **Diagnostics** section should now report **Netatmo connection OK** with a count of stations and modules — the integration tests the connection for you right after authorizing. You can click **Test Netatmo connection** at any time to re-check.
-4. Click **Refresh station discovery**.
-5. Under **Select Netatmo devices**, click **Click to set** and tick the devices you want Hubitat to manage.
-6. Click **Create/update selected supported devices**. Your child devices are created now.
-7. Choose your **Poll Interval**.
-8. Choose your unit preferences under **Units**.
-9. Click **Done** to save everything and start scheduled polling.
+3. **Diagnostics** should report **Netatmo connection OK** with station and module counts, and **Discovery** should already list your Netatmo devices. Both run automatically right after you authorize — you do not need to start them. If Discovery is empty, click **Refresh station discovery**.
+4. Under **Select Netatmo devices**, tick the devices you want Hubitat to manage.
+
+   **This step is required and easy to skip.** Until you select at least one device, a highlighted note tells you nothing will be created, and the **Child Devices** section is not shown at all. It appears as soon as you make a selection, and a green summary confirms what you picked.
+5. In **Child Devices**, click **Create/update selected supported devices**. Your child devices are created now.
+6. Choose your **Poll Interval**.
+7. Choose your unit preferences under **Units**.
+8. Click **Done** to save everything and start scheduled polling.
 
 **Sync child labels from Netatmo names** appears once at least one child device exists. Turning it on makes the next **Create/update selected supported devices** rename your Hubitat devices to match their current Netatmo names — useful if you rename things in the Netatmo app and want Hubitat to follow.
 

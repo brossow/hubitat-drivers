@@ -14,9 +14,10 @@ Changed:
 - The callback page now refers to the *integration page* rather than the *app page*, matching Hubitat's current navigation.
 - **Sync child labels from Netatmo names** is hidden until at least one child device exists. Previously it could be toggled on with no children present and would silently do nothing.
 
-Fixed:
-
-- **Create/update selected supported devices** now works on the first click. The device selection list did not commit its value before the button handler ran, so the first click saw an empty selection and created nothing; a second click was needed.
+- Station discovery now runs automatically right after authorization, alongside the connection test, so your Netatmo devices are already listed when you return to the settings page.
+- The **Child Devices** section is hidden until at least one device is selected, so **Create/update selected supported devices** can no longer be clicked in a state where it does nothing.
+- The Discovery section now shows which devices are selected. Selecting nothing produces a highlighted warning that nothing will be created; selecting devices produces a confirmation listing them by name.
+- Moved **Refresh station discovery** below the device picker, since discovery now runs on its own and the picker is what most people need first.
 - **Clear stored Netatmo tokens** now appears only when authorized, and explains what it does and does not affect.
 - The Authorization section now explains that a newly typed Client Secret is not registered until the field loses focus, which previously looked like the authorization link failing to appear.
 

@@ -119,40 +119,46 @@ def mainPage() {
                 }
             }
 
+            Map discovery = cachedDiscovery()
+            List selectedDnis = selectedDeviceDniList()
+
             section("Discovery") {
-                input name: "refreshDiscovery",
-                    type: "button",
-                    title: "Refresh station discovery"
-                paragraph discoveryStatusText()
-                Map discovery = cachedDiscovery()
                 if (discovery) {
                     input name: "selectedDeviceDnis",
                         type: "enum",
                         title: "Select Netatmo devices",
+                        description: "Tap to choose which discovered devices Hubitat should create.",
                         options: discoverySelectionOptions(discovery),
                         multiple: true,
                         required: false,
                         submitOnChange: true
+                    paragraph selectionSummaryHtml(discovery, selectedDnis)
                     paragraph discoveryDisplayHtml(discovery)
                 } else {
-                    paragraph "No devices have been discovered yet. Click Refresh station discovery to populate this list."
+                    paragraph calloutHtml("No devices have been discovered yet. Click <b>Refresh station discovery</b> below to look for your Netatmo stations and modules.")
                 }
+                input name: "refreshDiscovery",
+                    type: "button",
+                    title: "Refresh station discovery"
+                paragraph discoveryStatusText()
             }
 
-            section("Child Devices") {
-                paragraph "Supported child devices: Base Station, Outdoor Module, Indoor Module, Rain Gauge, and Wind Gauge."
-                if (hasChildDevices()) {
-                    input name: "syncLabels",
-                        type: "bool",
-                        title: "Sync child labels from Netatmo names",
-                        description: "Renames existing child devices to match their current Netatmo names the next time you create/update devices.",
-                        defaultValue: false,
-                        required: false
+            if (selectedDnis) {
+                section("Child Devices") {
+                    paragraph "Supported child devices: Base Station, Outdoor Module, Indoor Module, Rain Gauge, and Wind Gauge."
+                    if (hasChildDevices()) {
+                        input name: "syncLabels",
+                            type: "bool",
+                            title: "Sync child labels from Netatmo names",
+                            description: "Renames existing child devices to match their current Netatmo names the next time you create/update devices.",
+                            defaultValue: false,
+                            required: false
+                    }
+                    input name: "syncSupportedDevices",
+                        type: "button",
+                        title: "Create/update selected supported devices"
+                    paragraph supportedDeviceSyncStatusText()
                 }
-                input name: "syncSupportedDevices",
-                    type: "button",
-                    title: "Create/update selected supported devices"
-                paragraph supportedDeviceSyncStatusText()
             }
 
             section("Units") {
@@ -241,6 +247,25 @@ def mainPage() {
 
 private Boolean hasChildDevices() {
     return !!(getChildDevices() ?: [])
+}
+
+private String calloutHtml(String message) {
+    return "<div style=\"padding:10px 12px;border-left:4px solid #f0ad4e;background:#fdf7ec;color:#202124;\">${message}</div>"
+}
+
+private String selectionSummaryHtml(Map discovery, List selectedDnis) {
+    if (!selectedDnis) {
+        return calloutHtml("<b>No devices are selected yet.</b> Use <b>Select Netatmo devices</b> above and choose the " +
+            "${discovery.size()} discovered device(s) you want in Hubitat. Nothing is created until you select at least one.")
+    }
+
+    List names = selectedDnis.collect { dni ->
+        Map device = discovery[dni] instanceof Map ? (Map)discovery[dni] : null
+        device ? (device.displayName as String) : (dni as String)
+    }
+
+    return "<div style=\"padding:10px 12px;border-left:4px solid #5cb85c;background:#f1f8f1;color:#202124;\">" +
+        "<b>${selectedDnis.size()} device(s) selected:</b> ${names.join(', ')}</div>"
 }
 
 def appButtonHandler(String buttonName) {
@@ -424,11 +449,12 @@ def oauthCallback() {
     if (exchangeCodeForTokens(params.code as String)) {
         state.netatmoAuthenticated = true
         state.lastDiagnosticStatus = "Authorization complete. Testing the Netatmo connection..."
-        runIn(2, "runStationsDataDiagnostic")
+        state.lastDiscoveryStatus = "Authorization complete. Looking for your Netatmo devices..."
+        runIn(2, "runPostAuthorizationSetup")
         log.info "Netatmo authorization completed successfully"
         return renderCallbackPage(
             "Netatmo authorization succeeded",
-            "Authorization is complete. Hubitat is testing the connection to Netatmo now.")
+            "Authorization is complete. Hubitat is testing the connection and looking for your Netatmo devices now.")
     }
 
     state.netatmoAuthenticated = false
@@ -605,6 +631,11 @@ void clearAuthState() {
     state.remove("oauthState")
     state.remove("authenticated")
     state.netatmoAuthenticated = false
+}
+
+void runPostAuthorizationSetup() {
+    runStationsDataDiagnostic()
+    runStationDiscovery()
 }
 
 void runStationsDataDiagnostic() {

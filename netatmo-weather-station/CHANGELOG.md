@@ -18,6 +18,8 @@ Changed:
 - The **Child Devices** section is hidden until at least one device is selected, so **Create/update selected supported devices** can no longer be clicked in a state where it does nothing.
 - The Discovery section now shows which devices are selected. Selecting nothing produces a highlighted warning that nothing will be created; selecting devices produces a confirmation listing them by name.
 - Moved **Refresh station discovery** below the device picker, since discovery now runs on its own and the picker is what most people need first.
+- **Child Devices** now reports live state — how many of your selected devices actually exist in Hubitat right now — instead of only replaying the result of the last sync. The previous behavior could claim devices had been created after they were deleted, or immediately on opening the section before any sync had run in that session. The last-run result is still shown, now clearly labelled as history.
+- Added a prominent reminder that settings are not saved until **Done** is clicked. Hubitat places that button at the bottom right, past every other section, and an integration abandoned before clicking it is never actually added even though child devices may already exist. The reminder appears at the top and bottom of the page until the app has been installed once, then shrinks to a single quiet line.
 - **Clear stored Netatmo tokens** now appears only when authorized, and explains what it does and does not affect.
 - The Authorization section now explains that a newly typed Client Secret is not registered until the field loses focus, which previously looked like the authorization link failing to appear.
 

@@ -55,6 +55,7 @@ def uninstalled() {
 }
 
 def initialize() {
+    state.setupCompleted = true
     unschedule()
     state.appVersion = appVersion()
     migrateNetatmoTokenState()
@@ -69,6 +70,14 @@ def mainPage() {
     repairStalePollingIfNeeded()
 
     return dynamicPage(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true) {
+        if (!setupSaved()) {
+            section {
+                paragraph urgentCalloutHtml("<b>This integration is not added to your hub yet.</b> " +
+                    "Nothing on this page is saved, and polling will not start, until you scroll to the bottom of this page " +
+                    "and click <b>Done</b> in the lower right. You can come back and change any of these settings afterward.")
+            }
+        }
+
         section("Netatmo API Credentials") {
             paragraph "Create an application at https://dev.netatmo.com/ and enter its client credentials here."
             input name: "clientId",
@@ -154,6 +163,7 @@ def mainPage() {
                             defaultValue: false,
                             required: false
                     }
+                    paragraph childDeviceStatusHtml(selectedDnis)
                     input name: "syncSupportedDevices",
                         type: "button",
                         title: "Create/update selected supported devices"
@@ -242,6 +252,12 @@ def mainPage() {
                 defaultValue: false,
                 required: false
         }
+
+        section {
+            paragraph setupSaved()
+                ? "Changes on this page take effect when you click <b>Done</b> below."
+                : urgentCalloutHtml("<b>Don't forget:</b> click <b>Done</b> in the lower right to finish adding this integration.")
+        }
     }
 }
 
@@ -251,6 +267,40 @@ private Boolean hasChildDevices() {
 
 private String calloutHtml(String message) {
     return "<div style=\"padding:10px 12px;border-left:4px solid #f0ad4e;background:#fdf7ec;color:#202124;\">${message}</div>"
+}
+
+private String successCalloutHtml(String message) {
+    return "<div style=\"padding:10px 12px;border-left:4px solid #5cb85c;background:#f1f8f1;color:#202124;\">${message}</div>"
+}
+
+private String urgentCalloutHtml(String message) {
+    return "<div style=\"padding:12px 14px;border-left:5px solid #d9534f;background:#fdf0ef;color:#202124;font-size:1.05em;\">${message}</div>"
+}
+
+// True once Hubitat has actually installed this app instance, which only happens
+// when Done is clicked. Installs predating this flag have already polled.
+private Boolean setupSaved() {
+    if (state.setupCompleted) {
+        return true
+    }
+
+    if (state.lastPollAt) {
+        state.setupCompleted = true
+        return true
+    }
+
+    return false
+}
+
+private String childDeviceStatusHtml(List selectedDnis) {
+    List missing = selectedDnis.findAll { !getChildDevice(it as String) }
+
+    if (!missing) {
+        return successCalloutHtml("All ${selectedDnis.size()} selected device(s) exist in Hubitat.")
+    }
+
+    return calloutHtml("<b>${missing.size()} of ${selectedDnis.size()} selected device(s) have not been created in Hubitat yet.</b> " +
+        "Click <b>Create/update selected supported devices</b> below.")
 }
 
 private String selectionSummaryHtml(Map discovery, List selectedDnis) {
@@ -344,13 +394,13 @@ String discoveryStatusText() {
 
 String supportedDeviceSyncStatusText() {
     if (state.lastSupportedDeviceSyncStatus) {
-        String timestamp = state.lastSupportedDeviceSyncAt ? " Last run ${formatTimestamp(state.lastSupportedDeviceSyncAt)}." : ""
-        return "${state.lastSupportedDeviceSyncStatus}${timestamp}"
+        String timestamp = state.lastSupportedDeviceSyncAt ? " on ${formatTimestamp(state.lastSupportedDeviceSyncAt)}" : ""
+        return "Most recent sync${timestamp}: ${state.lastSupportedDeviceSyncStatus}"
     }
 
     if (state.lastBaseStationSyncStatus) {
-        String timestamp = state.lastBaseStationSyncAt ? " Last run ${formatTimestamp(state.lastBaseStationSyncAt)}." : ""
-        return "${state.lastBaseStationSyncStatus}${timestamp}"
+        String timestamp = state.lastBaseStationSyncAt ? " on ${formatTimestamp(state.lastBaseStationSyncAt)}" : ""
+        return "Most recent sync${timestamp}: ${state.lastBaseStationSyncStatus}"
     }
 
     return "No supported child device sync has been run yet."
@@ -715,7 +765,7 @@ void syncSelectedSupportedDevices() {
     Map summary = createSelectedSupportedChildren(normalized)
     Integer updated = updateSelectedSupportedDevices(normalized)
     state.lastSupportedDeviceSyncAt = now()
-    state.lastSupportedDeviceSyncStatus = "Supported device sync complete: ${summary.created} created, ${summary.existing} already existed, ${updated} updated."
+    state.lastSupportedDeviceSyncStatus = "${summary.created} created, ${summary.existing} already existed, ${updated} updated."
     log.info "Netatmo supported device sync complete: ${summary.created} created, ${summary.existing} existing, ${updated} updated"
 }
 

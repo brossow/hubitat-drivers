@@ -107,6 +107,10 @@ The Netatmo token generator on that page is not needed. Hubitat handles the whol
 5. Copy the **client id** from the Netatmo tab into **Client ID**, and the **client secret** into **Client Secret**. The secret is masked as you type, which is normal.
 6. **After typing or pasting the secret, click somewhere else on the page or press Enter.** Hubitat does not register the value until the field loses focus. The page then refreshes and an **Authorize Netatmo** link appears in the **Authorization** section.
 
+![The Netatmo Weather Station Connect settings page in Hubitat before authorizing. It shows three sections: Netatmo API Credentials with Client ID and Client Secret fields, Authorization showing "Not authenticated" and an Authorize Netatmo link, and Logging with a debug logging toggle. The Done button is in the lower right.](Netatmo_HubitatSetup_screenshot.png)
+
+*This is the page on your hub, with credentials entered and the **Authorize Netatmo** link ready. Before you authorize, only these three sections appear — Discovery, Child Devices, Units, and Polling show up afterward. Note **Done** in the lower right.*
+
 If **Authorization** still asks you to enter your credentials, one of the two fields has not registered — click into it and back out again.
 
 If it says *"Hubitat app OAuth is not enabled yet,"* you skipped step 5 of [Installation](#installation). Go to **Apps code**, open `NetatmoWeatherStationConnect`, click **OAuth**, enable it, then come back.

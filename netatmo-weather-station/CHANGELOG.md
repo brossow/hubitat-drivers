@@ -12,7 +12,11 @@ Changed:
 - The connection test now runs automatically right after a successful authorization, so the page reports **Netatmo connection OK** with station and module counts without any extra clicks.
 - The authorization callback page now explains how to fix the specific failure it received, instead of only printing Netatmo's raw error code. Covers `redirect_uri_mismatch`, `invalid_client`, and `access_denied`.
 - The callback page now refers to the *integration page* rather than the *app page*, matching Hubitat's current navigation.
-- **Sync child labels from Netatmo names** is hidden until at least one child device exists, replaced by a note explaining when it becomes available. Previously it could be toggled on with no children present and would silently do nothing.
+- **Sync child labels from Netatmo names** is hidden until at least one child device exists. Previously it could be toggled on with no children present and would silently do nothing.
+
+Fixed:
+
+- **Create/update selected supported devices** now works on the first click. The device selection list did not commit its value before the button handler ran, so the first click saw an empty selection and created nothing; a second click was needed.
 - **Clear stored Netatmo tokens** now appears only when authorized, and explains what it does and does not affect.
 - The Authorization section now explains that a newly typed Client Secret is not registered until the field loses focus, which previously looked like the authorization link failing to appear.
 

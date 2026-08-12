@@ -131,7 +131,8 @@ def mainPage() {
                         title: "Select Netatmo devices",
                         options: discoverySelectionOptions(discovery),
                         multiple: true,
-                        required: false
+                        required: false,
+                        submitOnChange: true
                     paragraph discoveryDisplayHtml(discovery)
                 } else {
                     paragraph "No devices have been discovered yet. Click Refresh station discovery to populate this list."
@@ -147,8 +148,6 @@ def mainPage() {
                         description: "Renames existing child devices to match their current Netatmo names the next time you create/update devices.",
                         defaultValue: false,
                         required: false
-                } else {
-                    paragraph "Label syncing becomes available once at least one child device exists. Select your devices above, then click Create/update selected supported devices."
                 }
                 input name: "syncSupportedDevices",
                     type: "button",

@@ -88,7 +88,11 @@ This entire step happens in a web browser on Netatmo's website. You are not touc
 6. Tick the box to accept the terms and conditions, then click **Save**.
 7. The page reloads and now shows an **App Technical Parameters** section containing your **client id** and **client secret**. Keep this tab open — you will copy both in the next step.
 
-**Leave the Redirect URI field empty.** This integration does not need one. If you are reusing an application you created earlier and that field already has a URL in it, clear it and save — otherwise authorization will fail with `redirect_uri_mismatch`.
+![The Netatmo developer application settings page. App information is at the top; the App Technical Parameters section below it holds the redirect URI, webhook URI, client ID, and client secret. The client ID and secret are redacted in this example, and the redirect URI is left empty.](Netatmo_DeveloperApp_screenshot.png)
+
+*Your finished application should look like this. The redacted fields are the ones unique to your account — the two on the right, **client ID** and **client secret**, are what you copy into Hubitat.*
+
+**Leave the Redirect URI field empty**, exactly as shown above. This integration does not need one. If you are reusing an application you created earlier and that field already has a URL in it, clear it and save — otherwise authorization will fail with `redirect_uri_mismatch`.
 
 The Netatmo token generator on that page is not needed. Hubitat handles the whole authorization exchange itself.
 

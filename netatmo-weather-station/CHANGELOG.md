@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0] - 2026-08-12
+
+This release is focused on setup and first-run experience. Existing working
+installations are unaffected and need no changes.
+
+Changed:
+
+- The setup page now shows only **Netatmo API Credentials**, **Authorization**, and **Logging** until authorization succeeds. Diagnostics, Discovery, Child Devices, Units, and Polling appear once you are authorized, so a first-time setup page is no longer a wall of unusable controls. Logging stays visible throughout so debug logging can be enabled while troubleshooting authorization.
+- Renamed the **Test getstationsdata** button to **Test Netatmo connection**, and reworded its status messages in plain language.
+- The connection test now runs automatically right after a successful authorization, so the page reports **Netatmo connection OK** with station and module counts without any extra clicks.
+- The authorization callback page now explains how to fix the specific failure it received, instead of only printing Netatmo's raw error code. Covers `redirect_uri_mismatch`, `invalid_client`, and `access_denied`.
+- The callback page now refers to the *integration page* rather than the *app page*, matching Hubitat's current navigation.
+- **Sync child labels from Netatmo names** is hidden until at least one child device exists, replaced by a note explaining when it becomes available. Previously it could be toggled on with no children present and would silently do nothing.
+- **Clear stored Netatmo tokens** now appears only when authorized, and explains what it does and does not affect.
+- The Authorization section now explains that a newly typed Client Secret is not registered until the field loses focus, which previously looked like the authorization link failing to appear.
+
+Removed:
+
+- The Netatmo callback URL is no longer displayed, and setup no longer asks you to paste it into a **Redirect URI** field on Netatmo. The integration never required one, and a stored Redirect URI was the cause of `redirect_uri_mismatch` failures when a Netatmo application was reused across hubs or an integration instance was recreated. Existing installations that already have a Redirect URI saved continue to work.
+
+Documentation:
+
+- Rewrote the setup walkthrough: explicit Netatmo developer portal navigation, a terminology table distinguishing the Netatmo developer application, the Hubitat integration, and the Netatmo mobile app, and corrected Hubitat navigation (**Integrations** → **Add user integration**).
+- Added troubleshooting entries for `redirect_uri_mismatch` and `invalid_client`.
+
 ## [0.3.0] - 2026-06-18
 
 Added:

@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.3.0
+ * Version: 0.4.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -33,7 +33,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.3.0" }
+private String appVersion() { return "0.4.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -86,23 +86,25 @@ def mainPage() {
         section("Authorization") {
             paragraph authenticationStatusText()
             if (!endpointOauthReady) {
-                paragraph "Hubitat app OAuth is not enabled yet. Save this app code, open it in Apps Code, click OAuth, enable OAuth, then return here."
+                paragraph "Hubitat app OAuth is not enabled yet. Go to Apps code, open NetatmoWeatherStationConnect, click OAuth, enable it, then return here."
             } else if (credentialsConfigured()) {
-                paragraph "Netatmo callback URL:\n${callbackUrl()}"
                 paragraph authorizationLinkHtml(authorizationUrl, state.netatmoAuthenticated ? "Reauthorize Netatmo" : "Authorize Netatmo")
-                input name: "clearAuthorization",
-                    type: "button",
-                    title: "Clear stored Netatmo tokens"
+                if (state.netatmoAuthenticated) {
+                    input name: "clearAuthorization",
+                        type: "button",
+                        title: "Clear stored Netatmo tokens"
+                    paragraph "Clearing tokens signs this hub out of Netatmo and hides the sections below until you authorize again. It does not delete child devices, and it does not change anything in your Netatmo account."
+                }
             } else {
-                paragraph "Enter and save the Netatmo client credentials before authorizing."
+                paragraph "Enter your Netatmo Client ID and Client Secret above. After typing the secret, click elsewhere on the page or press Enter so Hubitat registers it, and the authorization link will appear here."
             }
         }
 
-        section("Diagnostics") {
-            if (state.netatmoAuthenticated) {
+        if (state.netatmoAuthenticated) {
+            section("Diagnostics") {
                 input name: "testStationsData",
                     type: "button",
-                    title: "Test getstationsdata"
+                    title: "Test Netatmo connection"
                 input name: "inspectAvailableFields",
                     type: "button",
                     title: "Inspect available fields"
@@ -111,19 +113,13 @@ def mainPage() {
                         type: "button",
                         title: "Clear field diagnostics"
                 }
-            } else {
-                paragraph "Authorize Netatmo before running the API diagnostic."
+                paragraph diagnosticStatusText()
+                if (state.lastFieldDiagnostic) {
+                    paragraph fieldDiagnosticDisplayHtml(state.lastFieldDiagnostic instanceof Map ? (Map)state.lastFieldDiagnostic : [:])
+                }
             }
-            paragraph diagnosticStatusText()
-            if (state.lastFieldDiagnostic) {
-                paragraph fieldDiagnosticDisplayHtml(state.lastFieldDiagnostic instanceof Map ? (Map)state.lastFieldDiagnostic : [:])
-            }
-        }
 
-        section("Discovery") {
-            if (!state.netatmoAuthenticated) {
-                paragraph "Authorize Netatmo before discovering stations and modules."
-            } else {
+            section("Discovery") {
                 input name: "refreshDiscovery",
                     type: "button",
                     title: "Refresh station discovery"
@@ -138,101 +134,100 @@ def mainPage() {
                         required: false
                     paragraph discoveryDisplayHtml(discovery)
                 } else {
-                    paragraph "No discovered devices are cached yet. Run station discovery to populate this list."
+                    paragraph "No devices have been discovered yet. Click Refresh station discovery to populate this list."
                 }
             }
-        }
 
-        section("Child Devices") {
-            paragraph "Supported child devices: Base Station, Outdoor Module, Indoor Module, Rain Gauge, and Wind Gauge."
-            if (!state.netatmoAuthenticated) {
-                paragraph "Authorize Netatmo before creating or updating child devices."
-            } else {
-                input name: "syncLabels",
-                    type: "bool",
-                    title: "Sync child labels from Netatmo names",
-                    defaultValue: false,
-                    required: false
+            section("Child Devices") {
+                paragraph "Supported child devices: Base Station, Outdoor Module, Indoor Module, Rain Gauge, and Wind Gauge."
+                if (hasChildDevices()) {
+                    input name: "syncLabels",
+                        type: "bool",
+                        title: "Sync child labels from Netatmo names",
+                        description: "Renames existing child devices to match their current Netatmo names the next time you create/update devices.",
+                        defaultValue: false,
+                        required: false
+                } else {
+                    paragraph "Label syncing becomes available once at least one child device exists. Select your devices above, then click Create/update selected supported devices."
+                }
                 input name: "syncSupportedDevices",
                     type: "button",
                     title: "Create/update selected supported devices"
                 paragraph supportedDeviceSyncStatusText()
             }
-        }
 
-        section("Units") {
-            input name: "temperatureUnitPreference",
-                type: "enum",
-                title: "Temperature",
-                options: [
-                    "location": "Hubitat location default",
-                    "C": "Celsius",
-                    "F": "Fahrenheit"
-                ],
-                defaultValue: "location",
-                required: true
-            input name: "pressureUnitPreference",
-                type: "enum",
-                title: "Pressure",
-                options: [
-                    "hpa": "hPa / mbar",
-                    "inHg": "inHg"
-                ],
-                defaultValue: "hpa",
-                required: true
-            input name: "rainUnitPreference",
-                type: "enum",
-                title: "Rain",
-                options: [
-                    "mm": "mm",
-                    "in": "inches"
-                ],
-                defaultValue: "mm",
-                required: true
-            input name: "windUnitPreference",
-                type: "enum",
-                title: "Wind speed",
-                options: [
-                    "kmh": "km/h",
-                    "mph": "mph",
-                    "ms": "m/s",
-                    "kn": "knots"
-                ],
-                defaultValue: defaultWindUnitPreference(),
-                required: true
-            input name: "windDirectionDisplayPreference",
-                type: "enum",
-                title: "Wind direction",
-                options: [
-                    "angle": "Numeric angle",
-                    "cardinal": "Text direction",
-                    "both": "Angle and text direction"
-                ],
-                defaultValue: "both",
-                required: true
-            paragraph "Unit preferences are applied by the parent app before child devices are updated."
-        }
+            section("Units") {
+                input name: "temperatureUnitPreference",
+                    type: "enum",
+                    title: "Temperature",
+                    options: [
+                        "location": "Hubitat location default",
+                        "C": "Celsius",
+                        "F": "Fahrenheit"
+                    ],
+                    defaultValue: "location",
+                    required: true
+                input name: "pressureUnitPreference",
+                    type: "enum",
+                    title: "Pressure",
+                    options: [
+                        "hpa": "hPa / mbar",
+                        "inHg": "inHg"
+                    ],
+                    defaultValue: "hpa",
+                    required: true
+                input name: "rainUnitPreference",
+                    type: "enum",
+                    title: "Rain",
+                    options: [
+                        "mm": "mm",
+                        "in": "inches"
+                    ],
+                    defaultValue: "mm",
+                    required: true
+                input name: "windUnitPreference",
+                    type: "enum",
+                    title: "Wind speed",
+                    options: [
+                        "kmh": "km/h",
+                        "mph": "mph",
+                        "ms": "m/s",
+                        "kn": "knots"
+                    ],
+                    defaultValue: defaultWindUnitPreference(),
+                    required: true
+                input name: "windDirectionDisplayPreference",
+                    type: "enum",
+                    title: "Wind direction",
+                    options: [
+                        "angle": "Numeric angle",
+                        "cardinal": "Text direction",
+                        "both": "Angle and text direction"
+                    ],
+                    defaultValue: "both",
+                    required: true
+                paragraph "Unit preferences are applied by the parent app before child devices are updated."
+            }
 
-        section("Polling") {
-            input name: "pollIntervalMinutes",
-                type: "enum",
-                title: "Poll Interval",
-                options: pollIntervalOptions(),
-                defaultValue: "5",
-                required: true
-            if (state.netatmoAuthenticated) {
+            section("Polling") {
+                input name: "pollIntervalMinutes",
+                    type: "enum",
+                    title: "Poll Interval",
+                    options: pollIntervalOptions(),
+                    defaultValue: "5",
+                    required: true
                 input name: "runPollNow",
                     type: "button",
                     title: "Run poll now"
                 input name: "reschedulePolling",
                     type: "button",
                     title: "Reschedule polling"
+                String healthWarning = pollHealthWarningText()
+                if (healthWarning) {
+                    paragraph healthWarning
+                }
+                paragraph pollStatusText()
             }
-            String healthWarning = pollHealthWarningText()
-            if (healthWarning) {
-                paragraph healthWarning
-            }
-            paragraph pollStatusText()
         }
 
         section("Logging") {
@@ -243,6 +238,10 @@ def mainPage() {
                 required: false
         }
     }
+}
+
+private Boolean hasChildDevices() {
+    return !!(getChildDevices() ?: [])
 }
 
 def appButtonHandler(String buttonName) {
@@ -405,7 +404,10 @@ def oauthCallback() {
     if (params.error) {
         log.error "Netatmo authorization failed: ${params.error} ${params.error_description ?: ''}"
         state.netatmoAuthenticated = false
-        return renderCallbackPage("Netatmo authorization failed", "Netatmo returned: ${params.error}")
+        return renderCallbackPage(
+            "Netatmo authorization failed",
+            "Netatmo returned: ${params.error}",
+            callbackRemediationText(params.error as String))
     }
 
     if (!params.code) {
@@ -422,9 +424,12 @@ def oauthCallback() {
 
     if (exchangeCodeForTokens(params.code as String)) {
         state.netatmoAuthenticated = true
-        state.lastDiagnosticStatus = "Authentication completed. Run the getstationsdata diagnostic from the app page."
+        state.lastDiagnosticStatus = "Authorization complete. Testing the Netatmo connection..."
+        runIn(2, "runStationsDataDiagnostic")
         log.info "Netatmo authorization completed successfully"
-        return renderCallbackPage("Netatmo authorization succeeded", "Authorization is complete.")
+        return renderCallbackPage(
+            "Netatmo authorization succeeded",
+            "Authorization is complete. Hubitat is testing the connection to Netatmo now.")
     }
 
     state.netatmoAuthenticated = false
@@ -607,14 +612,14 @@ void runStationsDataDiagnostic() {
     Map result = apiRequest("GET", "/api/getstationsdata")
 
     if (!result.success) {
-        String message = "getstationsdata failed${result.status ? ' with HTTP ' + result.status : ''}: ${result.error ?: 'unknown error'}"
+        String message = "Netatmo connection test failed${result.status ? ' with HTTP ' + result.status : ''}: ${result.error ?: 'unknown error'}"
         state.lastDiagnosticStatus = message
         log.error "Netatmo diagnostic ${message}"
         return
     }
 
     Map summary = summarizeStationsData(result.data)
-    state.lastDiagnosticStatus = "getstationsdata succeeded: ${summary.stationCount} station(s), ${summary.moduleCount} module(s)."
+    state.lastDiagnosticStatus = "Netatmo connection OK: ${summary.stationCount} station(s), ${summary.moduleCount} module(s) visible."
     log.info "Netatmo diagnostic succeeded: ${summary.stationCount} station(s), ${summary.moduleCount} module(s)"
     debugLog "Netatmo diagnostic summary: ${summary}"
 }
@@ -1997,7 +2002,29 @@ private Map safeCallbackParams(Map callbackParams) {
     ]
 }
 
-private renderCallbackPage(String title, String message) {
+private String callbackRemediationText(String errorCode) {
+    if (errorCode == "redirect_uri_mismatch") {
+        return "Your Netatmo application has a Redirect URI saved that does not match this hub. " +
+            "Sign in at https://dev.netatmo.com/apps/, open the application whose Client ID you entered in Hubitat, " +
+            "clear the Redirect URI field, and save. Then return to Hubitat and click Authorize Netatmo again. " +
+            "This integration does not need a Redirect URI. " +
+            "If that same Netatmo application is already in use on another Hubitat hub, create a separate Netatmo application for this hub instead."
+    }
+
+    if (errorCode == "invalid_client") {
+        return "Netatmo did not recognize the Client ID or Client Secret. Recopy both from your application at " +
+            "https://dev.netatmo.com/apps/ and paste them into Hubitat again, making sure no extra spaces are included."
+    }
+
+    if (errorCode == "access_denied") {
+        return "The authorization request was declined. Click Authorize Netatmo again and choose YES, I ACCEPT."
+    }
+
+    return ""
+}
+
+private renderCallbackPage(String title, String message, String remediation = "") {
+    String remediationHtml = remediation ? "    <p><strong>How to fix this:</strong> ${escapeHtml(remediation)}</p>\n" : ""
     def html = """
 <!DOCTYPE html>
 <html>
@@ -2013,8 +2040,7 @@ private renderCallbackPage(String title, String message) {
   <main class="panel">
     <h2>${escapeHtml(title)}</h2>
     <p>${escapeHtml(message)}</p>
-    <p>Close this tab, then return to the Netatmo Weather Station Connect app in Hubitat.</p>
-    <p>Refresh the Netatmo Weather Station Connect app page to see the latest authorization status.</p>
+${remediationHtml}    <p>Close this tab, then return to the Netatmo Weather Station Connect integration page in Hubitat and refresh it to see the latest authorization status.</p>
   </main>
 </body>
 </html>

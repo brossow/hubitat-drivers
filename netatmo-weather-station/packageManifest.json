@@ -2,11 +2,11 @@
   "packageName": "Netatmo Weather Station Connect",
   "minimumHEVersion": "2.2.8",
   "author": "Brent Rossow",
-  "version": "0.3.0",
-  "dateReleased": "2026-06-18",
-  "releaseNotes": "Adds additional Netatmo fields including absolute pressure, standard sound pressure level, firmware, battery voltage, optional health fields, expanded diagnostics, and clearer base-station timestamp handling.",
+  "version": "0.4.0",
+  "dateReleased": "2026-08-12",
+  "releaseNotes": "Setup and first-run improvements. Removes the Redirect URI / callback URL step, which was never required and caused redirect_uri_mismatch failures. Failed authorization now explains how to fix the specific error. Setup page hides sections until authorized. Connection test runs automatically after authorizing. Label syncing hidden until child devices exist. Rewritten setup documentation.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/netatmo-weather-station",
-  "communityLink": "",
+  "communityLink": "https://community.hubitat.com/t/release-new-netatmo-weather-station-integration/163479",
   "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo-weather-station/LICENSE",
   "apps": [
     {

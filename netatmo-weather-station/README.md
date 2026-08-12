@@ -117,10 +117,12 @@ If it says *"Hubitat app OAuth is not enabled yet,"* you skipped step 5 of [Inst
 4. Under **Select Netatmo devices**, tick the devices you want Hubitat to manage.
 
    **This step is required and easy to skip.** Until you select at least one device, a highlighted note tells you nothing will be created, and the **Child Devices** section is not shown at all. It appears as soon as you make a selection, and a green summary confirms what you picked.
-5. In **Child Devices**, click **Create/update selected supported devices**. Your child devices are created now.
+5. In **Child Devices**, click **Create/update selected supported devices**. The section tells you how many of your selected devices still need creating, and turns green once they all exist in Hubitat.
 6. Choose your **Poll Interval**.
 7. Choose your unit preferences under **Units**.
-8. Click **Done** to save everything and start scheduled polling.
+8. **Scroll to the bottom of the page and click Done.** This is the step people miss. Hubitat puts **Done** in the lower right, past Units, Polling, and Logging, and until you click it the integration is not actually added to your hub — nothing is saved and polling never starts, even if child devices were already created. The page warns you about this until the first time you click it.
+
+You can reopen the integration and change any of these settings later. Each time you do, click **Done** again to save.
 
 **Sync child labels from Netatmo names** appears once at least one child device exists. Turning it on makes the next **Create/update selected supported devices** rename your Hubitat devices to match their current Netatmo names — useful if you rename things in the Netatmo app and want Hubitat to follow.
 
@@ -235,6 +237,10 @@ Netatmo did not recognize the Client ID or Client Secret. Recopy both from **App
 - Click **Create/update selected supported devices**.
 - Confirm the matching driver is installed and saved before running sync.
 - Check Hubitat logs for child creation warnings.
+
+### Everything Looked Right, but Nothing Works
+
+Check that you clicked **Done** at the bottom right of the settings page. Until you do, Hubitat has not finished adding the integration: settings are not saved and polling never starts. Child devices created before clicking **Done** will exist but will not update. Reopen the integration, confirm your settings are still there, and click **Done**.
 
 ### Devices Do Not Appear After Installation
 

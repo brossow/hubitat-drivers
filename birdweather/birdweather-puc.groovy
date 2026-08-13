@@ -26,7 +26,13 @@
  *  • Rule Machine: IF newLifetimeSpeciesDetected THEN send push "%value%"
  */
 
-private String getDriverVersion() { return "1.4.1" }
+private String getDriverVersion() { return "1.5.0" }
+
+// The BirdWeather /species endpoint silently caps `limit` at 100 and ignores
+// anything larger, so the all-time list has to be walked one page at a time.
+private int  getSpeciesPageSize()   { return 100 }
+private int  getSpeciesMaxPages()   { return 20 }        // safety stop — 2,000 species
+private long getLifetimeRefreshMs() { return 3600000L }  // re-read the all-time list hourly
 
 metadata {
     definition(
@@ -186,6 +192,7 @@ private String pollIntervalToCron(String interval) {
 // ── Commands ───────────────────────────────────────────────────────────────
 
 def refresh() {
+    state.remove("lastLifetimeFetchMs")  // a manual refresh always re-reads the all-time list
     poll()
 }
 
@@ -207,7 +214,7 @@ def poll() {
     fetchDayStats()
     fetchTopSpecies()
     fetchAllTimeStats()
-    fetchAllTimeSpecies()
+    maybeFetchAllTimeSpecies()
 }
 
 def retryPoll() {
@@ -285,10 +292,27 @@ private fetchAllTimeStats() {
                     [period: "all"]))
 }
 
-private fetchAllTimeSpecies() {
+/**
+ * The all-time species list only changes when a genuinely new bird shows up,
+ * so walking every page on every poll is wasted API calls. Refresh it hourly
+ * (or on demand via Refresh); newLifetimeSpeciesDetected fills the gap in
+ * between by adding species as they are detected.
+ */
+private maybeFetchAllTimeSpecies() {
+    def lastMs = state.lastLifetimeFetchMs ?: 0
+    if (now() - lastMs < lifetimeRefreshMs) {
+        debugLog "All-time species list is current — skipping refresh"
+        return
+    }
+    fetchAllTimeSpecies(1)
+}
+
+private fetchAllTimeSpecies(int page) {
+    if (page == 1) state.remove("lifetimeFetchBuffer")
     asynchttpGet("handleAllTimeSpeciesResponse",
         buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/species",
-                    [period: "all", limit: 500]))
+                    [period: "all", limit: speciesPageSize, page: page]),
+        [page: page])
 }
 
 // ── Response Handlers ──────────────────────────────────────────────────────
@@ -417,12 +441,19 @@ def handleDetectionsResponse(response, data) {
 
                     if (!(dName in seenLifetime)) {
                         seenLifetime << dName
-                        sendEvent(
-                            name:            "newLifetimeSpeciesDetected",
-                            value:           dName,
-                            descriptionText: "New lifetime species: ${dName} (${dSci})"
-                        )
-                        log.info "BirdWeather: new lifetime species — ${dName}"
+                        // Until the all-time list has loaded at least once there is no
+                        // way to tell a genuine first-ever sighting from a bird we simply
+                        // haven't read in yet — record it, but don't cry wolf.
+                        if (state.lifetimeBootstrapped) {
+                            sendEvent(
+                                name:            "newLifetimeSpeciesDetected",
+                                value:           dName,
+                                descriptionText: "New lifetime species: ${dName} (${dSci})"
+                            )
+                            log.info "BirdWeather: new lifetime species — ${dName}"
+                        } else {
+                            debugLog "All-time list not loaded yet — recording ${dName} without firing an event"
+                        }
                     }
                 } else {
                     debugLog "Event suppressed by certainty filter: ${dCert}"
@@ -507,31 +538,72 @@ def handleAllTimeStatsResponse(response, data) {
 }
 
 def handleAllTimeSpeciesResponse(response, data) {
+    def page = safeInt(data?.page, 1)
+
     if (response.hasError()) {
-        debugLog "All-time species API returned HTTP ${response.status} — skipping"
+        debugLog "All-time species API returned HTTP ${response.status} on page ${page} — keeping existing list"
+        state.remove("lifetimeFetchBuffer")
         return
     }
     try {
         def json        = response.json
         def speciesList = json?.species
-        if (speciesList == null) return
+        if (speciesList == null) {
+            log.warn "BirdWeather: all-time species page ${page} had no species array — keeping existing list"
+            state.remove("lifetimeFetchBuffer")
+            return
+        }
 
         def names = speciesList
             .collect { sp -> sp?.commonName ?: sp?.common_name ?: "" }
             .findAll { it }
-            .sort()
 
-        sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(names))
-        state.lifetimeSpeciesSeen = names
-        debugLog "All-time species list: ${names.size()} species"
+        def buffer = (state.lifetimeFetchBuffer ?: []).collect()
+        buffer.addAll(names)
+        state.lifetimeFetchBuffer = buffer
+
+        // A full page means there is probably another one behind it.
+        if (speciesList.size() >= speciesPageSize && page < speciesMaxPages) {
+            debugLog "All-time species page ${page}: ${names.size()} names (${buffer.size()} total) — fetching page ${page + 1}"
+            fetchAllTimeSpecies(page + 1)
+            return
+        }
+
+        commitLifetimeSpecies(buffer)
+        state.remove("lifetimeFetchBuffer")
+        state.lastLifetimeFetchMs = now()
+
     } catch (Exception e) {
         log.error "BirdWeather: error parsing all-time species — ${e.message}"
+        state.remove("lifetimeFetchBuffer")
     }
 }
 
+/**
+ * Merges a freshly-fetched all-time species list into the tracked set.
+ *
+ * This is a union, never a replacement. The detections poll can legitimately
+ * record a species before BirdWeather's all-time aggregate catches up, and the
+ * two run as independent async handlers — replacing the list here would drop
+ * that species, and its next sighting would re-fire newLifetimeSpeciesDetected
+ * for a bird already alerted on.
+ */
+private commitLifetimeSpecies(List fetched) {
+    if (!fetched) {
+        log.warn "BirdWeather: all-time species fetch returned no names — keeping existing list"
+        return
+    }
+
+    def merged = ((state.lifetimeSpeciesSeen ?: []) + fetched).unique().sort()
+    state.lifetimeSpeciesSeen  = merged
+    state.lifetimeBootstrapped = true
+    sendEvent(name: "lifetimeSpeciesList", value: groovy.json.JsonOutput.toJson(merged))
+    debugLog "All-time species list: ${merged.size()} species"
+}
+
 // ── Species Field Helpers ──────────────────────────────────────────────────
-// The detections endpoint uses snake_case; the species endpoint uses camelCase.
-// Both are handled here so parsing is consistent across all response types.
+// Both endpoints currently return camelCase, but snake_case is accepted first
+// so an API that reverts to it keeps parsing consistently.
 
 private String speciesName(Map sp) {
     return sp?.common_name ?: sp?.commonName ?: "(unidentified)"

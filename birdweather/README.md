@@ -44,20 +44,31 @@ The longer API Token shown under Advanced Settings in the BirdWeather app is onl
 | `lifetimeDetections` | All-time total detection count (sourced from BirdWeather API) |
 | `lifetimeSpeciesList` | JSON array of all species ever detected, sorted alphabetically |
 | `birdDetected` | Trigger attribute — updates on every new detection |
-| `newSpeciesDetected` | Trigger attribute — updates when a new species is seen today |
+| `newSpeciesDetected` | Trigger attribute — updates when a species is first seen today |
+| `newLifetimeSpeciesDetected` | Trigger attribute — updates when a species is detected for the first time ever |
+| `driverVersion` | Installed driver version |
 | `lastPollStatus` | `OK` or an error message |
 | `lastPollTime` | Timestamp of the last successful poll |
 
 ## Events
 
-Two events fire in the device event log and can be used as Rule Machine triggers:
+Three events fire in the device event log and can be used as Rule Machine triggers:
 
 - **`birdDetected`** — fires on every new detection; `value` = common name  
   `descriptionText` example: *American Robin detected (94%, almost_certain)*
 - **`newSpeciesDetected`** — fires the first time a species is seen each day; `value` = common name  
   `descriptionText` example: *First American Robin sighting today! (Turdus migratorius)*
+- **`newLifetimeSpeciesDetected`** — fires the first time a species is ever detected at your station; `value` = common name  
+  `descriptionText` example: *New lifetime species: American Robin (Turdus migratorius)*
 
-The daily species list resets at midnight in your hub's time zone.
+The daily species list resets at midnight in your hub's time zone. The lifetime list does not reset — it is seeded from your station's complete history via the BirdWeather API, so it stays accurate across hub downtime and reboots.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| **Refresh** | Poll immediately, including a full re-read of the all-time species list |
+| **Reset History** | Clear all tracked state and attributes, then re-seed from the API. Lifetime alerts stay suppressed until the all-time list has reloaded, so this won't set off a burst of notifications |
 
 ## Preferences
 
@@ -68,8 +79,9 @@ The daily species list resets at midnight in your hub's time zone.
 | **Poll Interval** | How often to check for new detections (1–30 min) |
 | **Recent Detections to Track** | Depth of the `recentDetections` JSON history (3, 5, 10, or 20) |
 | **Minimum Confidence %** | Ignore detections below this threshold (0 = accept all) |
-| **Fire events only for certainty level ≥** | Filter `birdDetected`/`newSpeciesDetected` events by BirdWeather's certainty label |
+| **Fire events only for certainty level ≥** | Filter detection events by BirdWeather's certainty label |
 | **Pause polling at night** | Skip polls between sunset and sunrise |
+| **Fire birdDetected event on each detection** | Turn off to keep the event log quiet if you aren't triggering on individual detections |
 | **Enable Debug Logging** | Verbose logging in the hub's log viewer |
 
 ## Automation Ideas
@@ -78,9 +90,13 @@ The daily species list resets at midnight in your hub's time zone.
 > Rule Machine → Trigger: `birdDetected` changes →  
 > Action: Speak "%lastSpecies% detected in the backyard" on [speaker device]
 
-**Push notification for a new species:**
+**Push notification for a new species today:**
 > Rule Machine → Trigger: `newSpeciesDetected` changes →  
 > Action: Send push "New bird today: %value% (%lastSpeciesScientific%)"
+
+**Push notification for a first-ever sighting:**
+> Rule Machine → Trigger: `newLifetimeSpeciesDetected` changes →  
+> Action: Send push "First ever sighting: %value% (%lastSpeciesScientific%)"
 
 **Flash a light on a rare/high-confidence sighting:**
 > Rule Machine → Trigger: `birdDetected` changes  
@@ -108,4 +124,6 @@ This driver uses the [BirdWeather REST API](https://app.birdweather.com/api/v1):
 | `GET /stations/{id}/stats?period=day` | Today's species and detection counts |
 | `GET /stations/{id}/species?period=day&limit=5` | Top species today |
 | `GET /stations/{id}/stats?period=all` | All-time species and detection counts |
-| `GET /stations/{id}/species?period=all&limit=500` | All-time species list |
+| `GET /stations/{id}/species?period=all&limit=100&page=N` | All-time species list |
+
+> **Note:** the `/species` endpoint silently caps `limit` at 100 and returns results sorted by detection count, highest first — a larger `limit` is accepted without error but ignored. The driver walks the list with `page` until a short page comes back; requesting it in one batch would quietly truncate to your 100 most-detected species.

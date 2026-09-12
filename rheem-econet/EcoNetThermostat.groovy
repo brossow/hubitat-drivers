@@ -23,6 +23,7 @@ metadata {
         author: "brossow"
     ) {
         capability "Thermostat"
+        capability "TemperatureMeasurement"
         capability "Refresh"
         capability "Initialize"
 

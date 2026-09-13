@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.2.1
+ * Version: 0.3.0
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.clearblade.com.
@@ -41,6 +41,9 @@ metadata {
         command "setAwayMode", [
             [name: "Away Mode", type: "ENUM", constraints: ["away", "home"]]
         ]
+        // The Thermostat capability's mode enum has no fan-only, so the device
+        // page, dashboards and Rule Machine cannot reach it. This exposes it.
+        command "fanOnly"
     }
 
     preferences {
@@ -455,21 +458,15 @@ void updateAttributes(Map equip) {
     def running = equip["@RUNNINGSTATUS"]
     if (running != null) {
         def opState = "idle"
-        if (hubMode == "auto") {
+        if (running != "") {
             def runningText = running.toString().trim().toLowerCase()
-            if (runningText.startsWith("cool")) {
-                opState = "cooling"
-            } else if (runningText.startsWith("fan")) {
-                opState = "fan only"
-            } else if (runningText.startsWith("heat")) {
-                opState = "heating"
-            }
-        } else if (hubMode == "cool") {
-            opState = "cooling"
-        } else if (hubMode == "heat" || hubMode == "emergency heat") {
-            opState = "heating"
-        } else if (hubMode == "fan only") {
-            opState = "fan only"
+            if (runningText.startsWith("cool"))      opState = "cooling"
+            else if (runningText.startsWith("heat")) opState = "heating"
+            else if (runningText.startsWith("fan"))  opState = "fan only"
+            // Unrecognized status text — fall back to the configured mode
+            else if (hubMode == "cool")              opState = "cooling"
+            else if (hubMode == "fan only")          opState = "fan only"
+            else                                     opState = "heating"
         }
         logDebug "Running status '${running}' -> thermostatOperatingState '${opState}'"
         sendEvent(name: "thermostatOperatingState", value: opState)
@@ -534,6 +531,19 @@ def setThermostatMode(String hubMode) {
 
     publishCommand(["@MODE": idx])
     sendEvent(name: "thermostatMode", value: hubMode)
+}
+
+// Hubitat invokes a command named after the mode when one is picked in the UI.
+// The Thermostat capability supplies auto()/cool()/heat()/emergencyHeat()/off()
+// but nothing for "fan only", so selecting it threw MissingMethodException.
+// Groovy allows a quoted method name, which is what the UI actually calls.
+def "fan only"() {
+    setThermostatMode("fan only")
+}
+
+// Declared command, so dashboards and Rule Machine can reach fan-only too.
+def fanOnly() {
+    setThermostatMode("fan only")
 }
 
 def setHeatingSetpoint(BigDecimal temp) {

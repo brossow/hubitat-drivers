@@ -455,15 +455,16 @@ void updateAttributes(Map equip) {
     def running = equip["@RUNNINGSTATUS"]
     if (running != null) {
         def opState = "idle"
-        def runningKey = running.toString().trim().replace(" ", "").replace("_", "").toUpperCase()
-        if (runningKey) {
-            if (runningKey.contains("COOL"))      opState = "cooling"
-            else if (runningKey.contains("FAN")) opState = "fan only"
-            else if (runningKey.contains("HEAT")) opState = "heating"
+        def runningText = running.toString().trim().toLowerCase()
+        if (runningText) {
+            if (runningText.startsWith("cool"))      opState = "cooling"
+            else if (runningText.startsWith("fan")) opState = "fan only"
+            else if (runningText.startsWith("heat")) opState = "heating"
             else if (hubMode == "cool")          opState = "cooling"
             else if (hubMode == "fan only")     opState = "fan only"
             else                                opState = "heating"
         }
+        logDebug "Running status '${running}' -> thermostatOperatingState '${opState}'"
         sendEvent(name: "thermostatOperatingState", value: opState)
         sendEvent(name: "runningState",             value: running ?: "idle")
     }

@@ -450,12 +450,17 @@ void updateAttributes(Map equip) {
         }
     }
 
-    // Operating state — @RUNNINGSTATUS is non-empty when active
+    // Operating state — @RUNNINGSTATUS identifies the active direction. The
+    // thermostat mode may be AUTO while the unit is actively cooling.
     def running = equip["@RUNNINGSTATUS"]
     if (running != null) {
         def opState = "idle"
-        if (running != "") {
-            if (hubMode == "cool")              opState = "cooling"
+        def runningKey = running.toString().trim().replace(" ", "").replace("_", "").toUpperCase()
+        if (runningKey) {
+            if (runningKey.contains("COOL"))      opState = "cooling"
+            else if (runningKey.contains("FAN")) opState = "fan only"
+            else if (runningKey.contains("HEAT")) opState = "heating"
+            else if (hubMode == "cool")          opState = "cooling"
             else if (hubMode == "fan only")     opState = "fan only"
             else                                opState = "heating"
         }

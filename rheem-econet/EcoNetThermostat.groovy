@@ -23,6 +23,7 @@ metadata {
         author: "brossow"
     ) {
         capability "Thermostat"
+        capability "TemperatureMeasurement"
         capability "Refresh"
         capability "Initialize"
 
@@ -449,15 +450,28 @@ void updateAttributes(Map equip) {
         }
     }
 
-    // Operating state — @RUNNINGSTATUS is non-empty when active
+    // Operating state — @RUNNINGSTATUS identifies the active direction. The
+    // thermostat mode may be AUTO while the unit is actively cooling or heating.
     def running = equip["@RUNNINGSTATUS"]
     if (running != null) {
         def opState = "idle"
-        if (running != "") {
-            if (hubMode == "cool")              opState = "cooling"
-            else if (hubMode == "fan only")     opState = "fan only"
-            else                                opState = "heating"
+        if (hubMode == "auto") {
+            def runningText = running.toString().trim().toLowerCase()
+            if (runningText.startsWith("cool")) {
+                opState = "cooling"
+            } else if (runningText.startsWith("fan")) {
+                opState = "fan only"
+            } else if (runningText.startsWith("heat")) {
+                opState = "heating"
+            }
+        } else if (hubMode == "cool") {
+            opState = "cooling"
+        } else if (hubMode == "heat" || hubMode == "emergency heat") {
+            opState = "heating"
+        } else if (hubMode == "fan only") {
+            opState = "fan only"
         }
+        logDebug "Running status '${running}' -> thermostatOperatingState '${opState}'"
         sendEvent(name: "thermostatOperatingState", value: opState)
         sendEvent(name: "runningState",             value: running ?: "idle")
     }

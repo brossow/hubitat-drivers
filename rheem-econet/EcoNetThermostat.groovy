@@ -1,9 +1,9 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.3.0
+ * Version: 0.3.1
  *
  * Inspired by the Home Assistant pyeconet integration.
- * Uses the ClearBlade cloud API at rheem.clearblade.com.
+ * Uses the ClearBlade cloud API at rheem.rheemconnect.com.
  *
  * Authentication and data fetching use REST endpoints.
  * Commands are sent via the ClearBlade REST Messaging endpoint,
@@ -67,7 +67,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants  (@Field = script-level variable, accessible across all methods)
 // ---------------------------------------------------------------------------
-@Field String REST_BASE     = "https://rheem.clearblade.com/api/v/1"
+@Field String REST_BASE     = "https://rheem.rheemconnect.com/api/v/1"
 @Field String SYSTEM_KEY    = "e2e699cb0bb0bbb88fc8858cb5a401"
 @Field String SYSTEM_SECRET = "E2E699CB0BE6C6FADDB1B0BC9A20"
 

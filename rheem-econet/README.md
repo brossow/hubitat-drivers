@@ -107,8 +107,11 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 - Reads current temperature, heat/cool setpoints, HVAC mode, fan speed, and humidity
 - Sets mode, setpoints, and fan speed/mode via the ClearBlade HTTP→MQTT bridge
 - Enforces device deadband in auto mode (sends both setpoints in one command)
+- Reports operating state (`cooling` / `heating` / `fan only` / `idle`) from the unit's own running status, so it's correct in auto mode too
+- `fanOnly()` command, so dashboards and Rule Machine can reach fan-only mode (the standard `Thermostat` mode list has no entry for it)
 - Away mode (`awayMode` attribute + `setAwayMode()` command)
 - Configurable poll interval; automatic token re-auth on expiry
+- Failed logins back off (2 minutes, doubling up to an hour) rather than retrying on every poll; rejected credentials wait the full hour
 - Supports multiple thermostats on one account, selected by serial number
 
 ### Supported HVAC Modes
@@ -118,7 +121,9 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 `auto` · `low` · `medium` · `high` · `max`
 
 ### Capabilities
-`Thermostat` · `Refresh` · `Initialize`
+`Thermostat` · `TemperatureMeasurement` · `Refresh` · `Initialize`
+
+`TemperatureMeasurement` is declared alongside `Thermostat` on purpose: without it the hub's home page can't classify the device and shows it as an unknown type with no controls.
 
 ### Preferences
 
@@ -128,6 +133,7 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 | EcoNet Password | Your Rheem EcoNet account password |
 | Thermostat Serial Number | Which thermostat this device controls. Filled in automatically on first connect; set it yourself to choose a different one, copying from the `thermostat0` / `thermostat1` / … state variables on the Commands tab. |
 | Poll Interval | How often to refresh state from the cloud (default: 5 minutes) |
+| Temperature Unit | °F or °C for reported temperatures and setpoints (default: F). The API always works in Fahrenheit; the driver converts both ways. |
 | Enable Debug Logging | Logs detailed info to the Hubitat log (auto-disables after 30 minutes) |
 
 ---
@@ -144,6 +150,7 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 - Correctly resolves the firmware's dual-mode `ELECTRICGAS` entry based on device type (gas vs. electric)
 - Celsius/Fahrenheit selectable in preferences
 - Configurable poll interval; automatic token re-auth on expiry
+- Failed logins back off (2 minutes, doubling up to an hour) rather than retrying on every poll; rejected credentials wait the full hour
 
 ### Supported Modes
 `off` · `electric` · `energy saving` · `heat pump` · `high demand` · `gas` · `performance` · `vacation`

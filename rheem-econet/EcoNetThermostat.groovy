@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.3.1
+ * Version: 0.3.2
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.rheemconnect.com.
@@ -70,6 +70,8 @@ metadata {
 @Field String REST_BASE     = "https://rheem.rheemconnect.com/api/v/1"
 @Field String SYSTEM_KEY    = "e2e699cb0bb0bbb88fc8858cb5a401"
 @Field String SYSTEM_SECRET = "E2E699CB0BE6C6FADDB1B0BC9A20"
+@Field Integer LOGIN_RETRY_MIN = 120    // seconds; doubles with each failed login…
+@Field Integer LOGIN_RETRY_MAX = 3600   // …up to this cap
 
 // Maps from pyeconet mode string → Hubitat thermostatMode value
 @Field Map ECONET_MODE_TO_HUB = [
@@ -101,6 +103,12 @@ metadata {
     "HIGH"   : "high",
     "MAX"    : "max",
 ]
+
+// Normalizes @FANSPEED enum text to an ECONET_FAN_TO_HUB key: "Med.Lo" → "MEDLO".
+// Reading and commanding must agree on this, or dotted speeds read back as "auto".
+String fanKey(String text) {
+    return text?.trim()?.replace(" ", "_")?.replace(".", "")?.toUpperCase()
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -162,28 +170,97 @@ def login() {
                 if (data?.options?.success) {
                     state.userToken  = data.user_token
                     state.accountId  = data.options.account_id
+                    state.loginAt    = now()
+                    clearLoginBackoff()
                     logDebug "Login OK — account ${state.accountId}"
                     fetchEquipment()
                 } else {
-                    log.error "EcoNet login failed: ${data?.options?.message}"
-                    // Bad credentials — no point retrying automatically
+                    loginRejected(data?.options?.message as String)
                 }
             } else {
-                log.error "EcoNet login HTTP ${resp.status} — retrying in 2 minutes"
-                runIn(120, "login")
+                int delay = scheduleLoginRetry(false)
+                log.error "EcoNet login HTTP ${resp.status} — retrying in ${describeDelay(delay)}"
             }
         }
     } catch (Exception e) {
-        log.error "EcoNet login exception: ${e.message} — retrying in 2 minutes"
-        runIn(120, "login")
+        def status = httpErrorStatus(e)
+        if (status == 401 || status == 403) {
+            loginRejected("HTTP ${status}")
+        } else {
+            int delay = scheduleLoginRetry(false)
+            log.error "EcoNet login exception: ${e.message} — retrying in ${describeDelay(delay)}"
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Login retry backoff
+//
+// A failed login schedules the next attempt with a doubling delay — 2, 4, 8 …
+// minutes, capped at an hour — and polls don't log in while one is pending.
+// Without this, an outage or a mistyped password meant a failed login on every
+// poll indefinitely. Rejected credentials go straight to the cap: repeating a bad
+// password risks locking the account the Rheem app also uses. Saving Preferences
+// re-initializes and clears all of it.
+// ---------------------------------------------------------------------------
+int scheduleLoginRetry(boolean rejected) {
+    int failures = ((state.loginFailures ?: 0) as Integer) + 1
+    state.loginFailures = failures
+    int delay = rejected ? LOGIN_RETRY_MAX
+                         : Math.min(LOGIN_RETRY_MIN * (1 << Math.min(failures - 1, 5)), LOGIN_RETRY_MAX)
+    state.loginRetryAt = now() + delay * 1000L
+    runIn(delay, "login")
+    return delay
+}
+
+void loginRejected(String reason) {
+    int delay = scheduleLoginRetry(true)
+    log.error "EcoNet login rejected (${reason ?: 'no reason given'}). Check the EcoNet email and password on this " +
+              "device's Preferences tab and click Save Preferences, which retries immediately. " +
+              "Otherwise the next attempt is in ${describeDelay(delay)}."
+}
+
+void clearLoginBackoff() {
+    state.remove("loginFailures")
+    state.remove("loginRetryAt")
+}
+
+boolean loginBackoffActive() {
+    return state.loginRetryAt && now() < (state.loginRetryAt as Long)
+}
+
+String describeDelay(int seconds) {
+    return seconds >= 3600 ? "1 hour" : "${(seconds / 60) as Integer} minutes"
+}
+
+// A 401 means the session token expired: log in again — unless we only just did, in
+// which case the new token is being refused too and retrying at once would loop.
+void handleUnauthorized(String context) {
+    state.userToken = null
+    if (state.loginAt && now() - (state.loginAt as Long) < 60000) {
+        int delay = scheduleLoginRetry(false)
+        log.error "EcoNet ${context}: new session refused — retrying login in ${describeDelay(delay)}"
+    } else {
+        log.warn "EcoNet ${context}: session expired — re-authenticating"
+        login()
+    }
+}
+
+// Hubitat's httpPost throws for non-2xx responses instead of calling the closure,
+// so the status code has to be read from the exception.
+Integer httpErrorStatus(Exception e) {
+    return (e instanceof groovyx.net.http.HttpResponseException) ? e.statusCode : null
 }
 
 // ---------------------------------------------------------------------------
 // Fetch equipment  ——  POST /code/{systemKey}/getUserDataForApp
 // ---------------------------------------------------------------------------
 def fetchEquipment() {
-    if (!state.userToken) { login(); return }
+    if (!state.userToken) {
+        // After a failed login a retry is already scheduled — don't add an attempt on every poll
+        if (!loginBackoffActive()) login()
+        return
+    }
 
     def params = [
         uri        : "${REST_BASE}/code/${SYSTEM_KEY}/getUserDataForApp",
@@ -202,15 +279,14 @@ def fetchEquipment() {
                     log.error "EcoNet getUserDataForApp returned success=false"
                 }
             } else if (resp.status == 401) {
-                log.warn "EcoNet token expired — re-authenticating"
-                state.userToken = null
-                login()
+                handleUnauthorized("poll")
             } else {
                 log.error "EcoNet getUserDataForApp HTTP ${resp.status}"
             }
         }
     } catch (Exception e) {
-        log.error "EcoNet fetchEquipment exception: ${e.message}"
+        if (httpErrorStatus(e) == 401) handleUnauthorized("poll")
+        else log.error "EcoNet fetchEquipment exception: ${e.message}"
     }
 }
 
@@ -463,10 +539,12 @@ void updateAttributes(Map equip) {
             if (runningText.startsWith("cool"))      opState = "cooling"
             else if (runningText.startsWith("heat")) opState = "heating"
             else if (runningText.startsWith("fan"))  opState = "fan only"
-            // Unrecognized status text — fall back to the configured mode
-            else if (hubMode == "cool")              opState = "cooling"
-            else if (hubMode == "fan only")          opState = "fan only"
-            else                                     opState = "heating"
+            // Unrecognized status text — fall back to the configured mode where it implies a
+            // direction. In off or auto it doesn't, so stay idle rather than report a heat call
+            // that may not exist.
+            else if (hubMode == "cool")                     opState = "cooling"
+            else if (hubMode in ["heat", "emergency heat"]) opState = "heating"
+            else if (hubMode == "fan only")                 opState = "fan only"
         }
         logDebug "Running status '${running}' -> thermostatOperatingState '${opState}'"
         sendEvent(name: "thermostatOperatingState", value: opState)
@@ -477,12 +555,12 @@ void updateAttributes(Map equip) {
     def fanSpeedIndex = equip["@FANSPEED"]?.value
     def fanSpeedTexts = equip["@FANSPEED"]?.constraints?.enumText ?: state.fanSpeedEnumText
     if (fanSpeedIndex != null && fanSpeedTexts && fanSpeedIndex < fanSpeedTexts.size()) {
-        def econetFan = fanSpeedTexts[fanSpeedIndex].trim().replace(" ", "_").toUpperCase()
+        def econetFan = fanKey(fanSpeedTexts[fanSpeedIndex] as String)
         def hubFan    = ECONET_FAN_TO_HUB[econetFan] ?: "auto"
         sendEvent(name: "fanSpeed", value: hubFan)
 
         def supportedFanModes = fanSpeedTexts.collect { t ->
-            ECONET_FAN_TO_HUB[t.trim().replace(" ", "_").toUpperCase()]
+            ECONET_FAN_TO_HUB[fanKey(t as String)]
         }.findAll { it != null }.unique()
         // Hubitat thermostatFanMode expects "auto" / "circulate" / "on"
         // Map fanSpeed → thermostatFanMode for the capability
@@ -529,8 +607,7 @@ def setThermostatMode(String hubMode) {
     }
     if (idx == null) { log.error "Mode '${econetKey}' not found in device modes: ${enumText}"; return }
 
-    publishCommand(["@MODE": idx])
-    sendEvent(name: "thermostatMode", value: hubMode)
+    if (publishCommand(["@MODE": idx])) sendEvent(name: "thermostatMode", value: hubMode)
 }
 
 // Hubitat invokes a command named after the mode when one is picked in the UI.
@@ -558,18 +635,27 @@ def setHeatingSetpoint(BigDecimal temp) {
     // All API communication in Fahrenheit; deadband enforcement in Fahrenheit
     def tempF   = toFahrenheit(temp).intValue()
     def payload = ["@HEATSETPOINT": tempF]
-    def currentMode = device.currentValue("thermostatMode")
-    if (currentMode == "auto") {
+    Integer newCoolF = null
+    def coolSP = device.currentValue("coolingSetpoint")
+    // In auto, keep the cooling setpoint at least a deadband above. With no cooling setpoint
+    // read yet there is nothing to compare against, so leave that to the unit.
+    if (device.currentValue("thermostatMode") == "auto" && coolSP != null) {
         def deadband = (state.deadband as Integer) ?: 2
-        def coolSPF  = toFahrenheit(device.currentValue("coolingSetpoint") as BigDecimal ?: 0).intValue()
+        def coolSPF  = toFahrenheit(coolSP as BigDecimal).intValue()
         if (tempF > coolSPF - deadband) {
-            def newCoolF = tempF + deadband
+            newCoolF = tempF + deadband
+            def coolMaxF = (state.coolSpHigh as Integer) ?: 99
+            if (newCoolF > coolMaxF) {
+                log.error "Heating setpoint ${temp}${unit} is too high for auto mode: the cooling setpoint would have to " +
+                          "rise to ${toDisplayTemp(newCoolF)}${unit}, above its maximum of ${toDisplayTemp(coolMaxF)}${unit}"
+                return
+            }
             payload["@COOLSETPOINT"] = newCoolF
-            sendEvent(name: "coolingSetpoint", value: toDisplayTemp(newCoolF), unit: unit)
         }
     }
-    publishCommand(payload)
+    if (!publishCommand(payload)) return
     sendEvent(name: "heatingSetpoint", value: temp, unit: unit)
+    if (newCoolF != null) sendEvent(name: "coolingSetpoint", value: toDisplayTemp(newCoolF), unit: unit)
 }
 
 def setCoolingSetpoint(BigDecimal temp) {
@@ -584,18 +670,27 @@ def setCoolingSetpoint(BigDecimal temp) {
     // All API communication in Fahrenheit; deadband enforcement in Fahrenheit
     def tempF   = toFahrenheit(temp).intValue()
     def payload = ["@COOLSETPOINT": tempF]
-    def currentMode = device.currentValue("thermostatMode")
-    if (currentMode == "auto") {
+    Integer newHeatF = null
+    def heatSP = device.currentValue("heatingSetpoint")
+    // In auto, keep the heating setpoint at least a deadband below. With no heating setpoint
+    // read yet there is nothing to compare against, so leave that to the unit.
+    if (device.currentValue("thermostatMode") == "auto" && heatSP != null) {
         def deadband = (state.deadband as Integer) ?: 2
-        def heatSPF  = toFahrenheit(device.currentValue("heatingSetpoint") as BigDecimal ?: 0).intValue()
+        def heatSPF  = toFahrenheit(heatSP as BigDecimal).intValue()
         if (tempF < heatSPF + deadband) {
-            def newHeatF = tempF - deadband
+            newHeatF = tempF - deadband
+            def heatMinF = (state.heatSpLow as Integer) ?: 40
+            if (newHeatF < heatMinF) {
+                log.error "Cooling setpoint ${temp}${unit} is too low for auto mode: the heating setpoint would have to " +
+                          "drop to ${toDisplayTemp(newHeatF)}${unit}, below its minimum of ${toDisplayTemp(heatMinF)}${unit}"
+                return
+            }
             payload["@HEATSETPOINT"] = newHeatF
-            sendEvent(name: "heatingSetpoint", value: toDisplayTemp(newHeatF), unit: unit)
         }
     }
-    publishCommand(payload)
+    if (!publishCommand(payload)) return
     sendEvent(name: "coolingSetpoint", value: temp, unit: unit)
+    if (newHeatF != null) sendEvent(name: "heatingSetpoint", value: toDisplayTemp(newHeatF), unit: unit)
 }
 
 def setThermostatFanMode(String hubFanMode) {
@@ -610,8 +705,7 @@ def setThermostatFanMode(String hubFanMode) {
             text.trim().replace(" ", "_").replace("/", "_").toUpperCase() == targetKey
         }
         if (idx != null) {
-            publishCommand(["@FANMODE": idx])
-            sendEvent(name: "thermostatFanMode", value: hubFanMode)
+            if (publishCommand(["@FANMODE": idx])) sendEvent(name: "thermostatFanMode", value: reportedFanMode(hubFanMode))
             return
         }
         log.warn "EcoNet: fan mode '${targetKey}' not found in @FANMODE enum — falling back to @FANSPEED"
@@ -624,14 +718,21 @@ def setThermostatFanMode(String hubFanMode) {
     // "auto" → Auto speed; "on"/"circulate" → first non-auto speed
     def targetSpeed = (hubFanMode == "auto") ? "AUTO" : null
     def idx = findEnumIndex(fanSpeedEnum) { text ->
-        def key = text.trim().replace(" ", "_").replace(".", "").toUpperCase()
+        def key = fanKey(text as String)
         targetSpeed ? (key == targetSpeed) : (key != "AUTO")
     }
     if (idx == null) { log.warn "EcoNet: no suitable @FANSPEED entry for fan mode '${hubFanMode}'"; return }
 
-    publishCommand(["@FANSPEED": idx])
-    sendEvent(name: "thermostatFanMode", value: hubFanMode)
-    sendEvent(name: "fanSpeed", value: (hubFanMode == "auto") ? "auto" : fanSpeedEnum[idx].trim().toLowerCase())
+    if (!publishCommand(["@FANSPEED": idx])) return
+    sendEvent(name: "thermostatFanMode", value: reportedFanMode(hubFanMode))
+    sendEvent(name: "fanSpeed", value: ECONET_FAN_TO_HUB[fanKey(fanSpeedEnum[idx] as String)] ?: "auto")
+}
+
+// Polls report every non-auto fan setting as "circulate" (see updateAttributes), which is
+// also all supportedThermostatFanModes advertises, so report "on" the same way rather than
+// emitting a value the next poll immediately changes.
+String reportedFanMode(String hubFanMode) {
+    return (hubFanMode == "auto") ? "auto" : "circulate"
 }
 
 def setFanSpeed(String speed) {
@@ -642,19 +743,17 @@ def setFanSpeed(String speed) {
     if (!enumText) { log.warn "Fan speed enum not cached"; return }
 
     def idx = findEnumIndex(enumText) { text ->
-        text.trim().replace(" ", "_").replace(".", "").toUpperCase() == targetKey
+        fanKey(text as String) == targetKey
     }
     if (idx == null) { log.warn "Fan speed '${targetKey}' not found in ${enumText}"; return }
 
-    publishCommand(["@FANSPEED": idx])
-    sendEvent(name: "fanSpeed", value: speed)
+    if (publishCommand(["@FANSPEED": idx])) sendEvent(name: "fanSpeed", value: speed)
 }
 
 def setAwayMode(String mode) {
     logDebug "setAwayMode(${mode})"
     def away = (mode == "away")
-    publishCommand(["@AWAY": away])
-    sendEvent(name: "awayMode", value: mode)
+    if (publishCommand(["@AWAY": away])) sendEvent(name: "awayMode", value: mode)
 }
 
 // ---------------------------------------------------------------------------
@@ -667,15 +766,22 @@ def setAwayMode(String mode) {
 // The "body" field must be the MQTT payload serialized to a string
 // (i.e. double-encoded JSON), matching what the mobile app sends via MQTT.
 // ---------------------------------------------------------------------------
-void publishCommand(Map fields) {
-    if (!state.userToken || !state.deviceId || !state.serialNumber || !state.accountId) {
-        log.error "EcoNet: missing state — run refresh() or re-initialize"
-        return
+// Returns true only when the command was accepted, so callers update attributes only
+// for commands that actually went out.
+boolean publishCommand(Map fields, boolean isRetry = false) {
+    if (!state.userToken) {
+        log.error "EcoNet: not logged in — command not sent: ${fields}"
+        return false
+    }
+    if (!state.deviceId || !state.serialNumber || !state.accountId) {
+        log.error "EcoNet: no unit selected — command not sent: ${fields}. Run refresh(), or check the serial number preference."
+        return false
     }
 
-    def now = new Date().format("yyyy-MM-dd'T'HH:mm:ss")
+    // Millisecond resolution, so commands sent within the same second get distinct IDs
+    def stamp = new Date().format("yyyy-MM-dd'T'HH:mm:ss.SSS")
     def mqttPayload = [
-        transactionId : "HUBITAT_${now}",
+        transactionId : "HUBITAT_${stamp}",
         device_name   : state.deviceId,
         serial_number : state.serialNumber,
     ] + fields
@@ -694,23 +800,32 @@ void publishCommand(Map fields) {
         timeout    : 15,
     ]
 
+    boolean ok      = false
+    boolean expired = false
     try {
         httpPost(params) { resp ->
-            if (resp.status == 200) {
-                logDebug "Command published OK: ${fields}"
-                // Re-poll after 5 s to confirm the device accepted the change
-                runIn(5, "fetchEquipment")
-            } else if (resp.status == 401) {
-                log.warn "EcoNet token expired during command — re-authenticating"
-                state.userToken = null
-                login()
-            } else {
-                log.error "EcoNet publishCommand HTTP ${resp.status} — body: ${resp.data}"
-            }
+            if (resp.status == 200)      ok = true
+            else if (resp.status == 401) expired = true
+            else log.error "EcoNet publishCommand HTTP ${resp.status} — body: ${resp.data}"
         }
     } catch (Exception e) {
-        log.error "EcoNet publishCommand exception: ${e.message}"
+        if (httpErrorStatus(e) == 401) expired = true
+        else log.error "EcoNet publishCommand exception: ${e.message}"
     }
+
+    if (expired) {
+        handleUnauthorized("command")
+        // login() is synchronous, so if it worked a new token is already in place: send once more
+        if (!isRetry && state.userToken) return publishCommand(fields, true)
+        log.error "EcoNet: command not sent: ${fields}"
+        return false
+    }
+    if (ok) {
+        logDebug "Command published OK: ${fields}"
+        // Re-poll after 5 s to confirm the device accepted the change
+        runIn(5, "fetchEquipment")
+    }
+    return ok
 }
 
 // ---------------------------------------------------------------------------

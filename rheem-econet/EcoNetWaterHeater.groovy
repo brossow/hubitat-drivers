@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.3.1
+ * Version: 0.3.2
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -77,6 +77,8 @@ metadata {
 @Field String REST_BASE     = "https://rheem.rheemconnect.com/api/v/1"
 @Field String SYSTEM_KEY    = "e2e699cb0bb0bbb88fc8858cb5a401"
 @Field String SYSTEM_SECRET = "E2E699CB0BE6C6FADDB1B0BC9A20"
+@Field Integer LOGIN_RETRY_MIN = 120    // seconds; doubles with each failed login…
+@Field Integer LOGIN_RETRY_MAX = 3600   // …up to this cap
 
 // Cleaned @MODE enumText string (uppercase, no spaces/underscores/slashes) → display name
 // null means "resolve dynamically based on device type" (ELECTRICGAS case)
@@ -136,7 +138,11 @@ def updated() {
 
 def initialize() {
     logDebug "Initializing"
+    // Start clean, but keep the mode on() restores: initialize also runs at every hub
+    // startup, and wiping it there meant on() forgot a mode the user had set.
+    def lastActiveMode = state.lastActiveMode
     state.clear()
+    if (lastActiveMode) state.lastActiveMode = lastActiveMode
     // A freshly created device has no credentials yet, and nothing prompts the user
     // for them — say where they go rather than sitting silent with no data.
     if (!settings.email || !settings.password) {
@@ -156,6 +162,12 @@ def refresh() {
 def on() {
     // Restore last known active mode; fall back to a type-appropriate default
     def mode = state.lastActiveMode as String
+    if (!mode && (state.supportsOnOff as Boolean)) {
+        // Nothing remembered: power on in whatever mode the unit is already set to,
+        // rather than guessing a mode it might not offer
+        if (publishCommand(["@ENABLED": 1])) sendEvent(name: "switch", value: "on")
+        return
+    }
     if (!mode) {
         def t = state.genericType as String
         mode = (t == "gasWaterHeater" || t == "tanklessWaterHeater") ? "gas" : "energy saving"
@@ -190,28 +202,97 @@ def login() {
                 if (data?.options?.success) {
                     state.userToken = data.user_token
                     state.accountId = data.options.account_id
+                    state.loginAt   = now()
+                    clearLoginBackoff()
                     logDebug "Login OK — account ${state.accountId}"
                     fetchEquipment()
                 } else {
-                    log.error "EcoNet WH login failed: ${data?.options?.message}"
-                    // Bad credentials — no automatic retry
+                    loginRejected(data?.options?.message as String)
                 }
             } else {
-                log.error "EcoNet WH login HTTP ${resp.status} — retrying in 2 minutes"
-                runIn(120, "login")
+                int delay = scheduleLoginRetry(false)
+                log.error "EcoNet WH login HTTP ${resp.status} — retrying in ${describeDelay(delay)}"
             }
         }
     } catch (Exception e) {
-        log.error "EcoNet WH login exception: ${e.message} — retrying in 2 minutes"
-        runIn(120, "login")
+        def status = httpErrorStatus(e)
+        if (status == 401 || status == 403) {
+            loginRejected("HTTP ${status}")
+        } else {
+            int delay = scheduleLoginRetry(false)
+            log.error "EcoNet WH login exception: ${e.message} — retrying in ${describeDelay(delay)}"
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Login retry backoff
+//
+// A failed login schedules the next attempt with a doubling delay — 2, 4, 8 …
+// minutes, capped at an hour — and polls don't log in while one is pending.
+// Without this, an outage or a mistyped password meant a failed login on every
+// poll indefinitely. Rejected credentials go straight to the cap: repeating a bad
+// password risks locking the account the Rheem app also uses. Saving Preferences
+// re-initializes and clears all of it.
+// ---------------------------------------------------------------------------
+int scheduleLoginRetry(boolean rejected) {
+    int failures = ((state.loginFailures ?: 0) as Integer) + 1
+    state.loginFailures = failures
+    int delay = rejected ? LOGIN_RETRY_MAX
+                         : Math.min(LOGIN_RETRY_MIN * (1 << Math.min(failures - 1, 5)), LOGIN_RETRY_MAX)
+    state.loginRetryAt = now() + delay * 1000L
+    runIn(delay, "login")
+    return delay
+}
+
+void loginRejected(String reason) {
+    int delay = scheduleLoginRetry(true)
+    log.error "EcoNet WH login rejected (${reason ?: 'no reason given'}). Check the EcoNet email and password on this " +
+              "device's Preferences tab and click Save Preferences, which retries immediately. " +
+              "Otherwise the next attempt is in ${describeDelay(delay)}."
+}
+
+void clearLoginBackoff() {
+    state.remove("loginFailures")
+    state.remove("loginRetryAt")
+}
+
+boolean loginBackoffActive() {
+    return state.loginRetryAt && now() < (state.loginRetryAt as Long)
+}
+
+String describeDelay(int seconds) {
+    return seconds >= 3600 ? "1 hour" : "${(seconds / 60) as Integer} minutes"
+}
+
+// A 401 means the session token expired: log in again — unless we only just did, in
+// which case the new token is being refused too and retrying at once would loop.
+void handleUnauthorized(String context) {
+    state.userToken = null
+    if (state.loginAt && now() - (state.loginAt as Long) < 60000) {
+        int delay = scheduleLoginRetry(false)
+        log.error "EcoNet WH ${context}: new session refused — retrying login in ${describeDelay(delay)}"
+    } else {
+        log.warn "EcoNet WH ${context}: session expired — re-authenticating"
+        login()
+    }
+}
+
+// Hubitat's httpPost throws for non-2xx responses instead of calling the closure,
+// so the status code has to be read from the exception.
+Integer httpErrorStatus(Exception e) {
+    return (e instanceof groovyx.net.http.HttpResponseException) ? e.statusCode : null
 }
 
 // ---------------------------------------------------------------------------
 // Fetch equipment  ——  POST /code/{systemKey}/getUserDataForApp
 // ---------------------------------------------------------------------------
 def fetchEquipment() {
-    if (!state.userToken) { login(); return }
+    if (!state.userToken) {
+        // After a failed login a retry is already scheduled — don't add an attempt on every poll
+        if (!loginBackoffActive()) login()
+        return
+    }
 
     def params = [
         uri        : "${REST_BASE}/code/${SYSTEM_KEY}/getUserDataForApp",
@@ -230,15 +311,14 @@ def fetchEquipment() {
                     log.error "EcoNet WH getUserDataForApp returned success=false"
                 }
             } else if (resp.status == 401) {
-                log.warn "EcoNet WH token expired — re-authenticating"
-                state.userToken = null
-                login()
+                handleUnauthorized("poll")
             } else {
                 log.error "EcoNet WH getUserDataForApp HTTP ${resp.status}"
             }
         }
     } catch (Exception e) {
-        log.error "EcoNet WH fetchEquipment exception: ${e.message}"
+        if (httpErrorStatus(e) == 401) handleUnauthorized("poll")
+        else log.error "EcoNet WH fetchEquipment exception: ${e.message}"
     }
 }
 
@@ -571,7 +651,7 @@ def setHeatingSetpoint(temp) {
         log.error "EcoNet WH: setpoint ${t}${unit} out of range [${lo}–${hi}]"
         return
     }
-    publishCommand(["@SETPOINT": toFahrenheit(t).intValue()])
+    if (!publishCommand(["@SETPOINT": toFahrenheit(t).intValue()])) return
     sendEvent(name: "heatingSetpoint",    value: t, unit: unit)
     sendEvent(name: "thermostatSetpoint", value: t, unit: unit)
 }
@@ -580,7 +660,7 @@ def setWaterHeaterMode(String mode) {
     logDebug "setWaterHeaterMode(${mode})"
     def payload = buildModePayload(mode)
     if (payload == null) return   // error already logged in buildModePayload
-    publishCommand(payload)
+    if (!publishCommand(payload)) return
     sendEvent(name: "waterHeaterMode", value: mode)
     sendEvent(name: "switch",          value: (mode == "off") ? "off" : "on")
     def tMode = WH_MODE_TO_THERMOSTAT[mode]
@@ -590,8 +670,7 @@ def setWaterHeaterMode(String mode) {
 
 def setAwayMode(String mode) {
     logDebug "setAwayMode(${mode})"
-    publishCommand(["@AWAY": (mode == "away")])
-    sendEvent(name: "awayMode", value: mode)
+    if (publishCommand(["@AWAY": (mode == "away")])) sendEvent(name: "awayMode", value: mode)
 }
 
 // ThermostatMode capability — maps RM thermostat modes to water heater modes.
@@ -651,12 +730,11 @@ def buildModePayload(String display) {
         def idx = findModeIndex(enumText, display, genericType)
         if (idx != null) {
             payload["@MODE"] = idx
-        } else if (!supportsOnOff) {
-            // @MODE is the only control mechanism and we can't find the mode
+        } else {
+            // Sending @ENABLED alone would turn the heater on in whatever mode it was last in
+            // while reporting the one requested, so refuse a mode this unit doesn't offer.
             log.error "EcoNet WH: mode '${display}' not found in device modes: ${enumText}"
             return null
-        } else {
-            log.warn "EcoNet WH: mode '${display}' not in enumText — relying on @ENABLED only"
         }
     }
 
@@ -675,15 +753,22 @@ def findModeIndex(List enumText, String display, String genericType) {
 // ---------------------------------------------------------------------------
 // Publish command via ClearBlade REST HTTP→MQTT bridge
 // ---------------------------------------------------------------------------
-void publishCommand(Map fields) {
-    if (!state.userToken || !state.deviceId || !state.serialNumber || !state.accountId) {
-        log.error "EcoNet WH: missing state — run refresh() or re-initialize"
-        return
+// Returns true only when the command was accepted, so callers update attributes only
+// for commands that actually went out.
+boolean publishCommand(Map fields, boolean isRetry = false) {
+    if (!state.userToken) {
+        log.error "EcoNet WH: not logged in — command not sent: ${fields}"
+        return false
+    }
+    if (!state.deviceId || !state.serialNumber || !state.accountId) {
+        log.error "EcoNet WH: no unit selected — command not sent: ${fields}. Run refresh(), or check the serial number preference."
+        return false
     }
 
-    def now = new Date().format("yyyy-MM-dd'T'HH:mm:ss")
+    // Millisecond resolution, so commands sent within the same second get distinct IDs
+    def stamp = new Date().format("yyyy-MM-dd'T'HH:mm:ss.SSS")
     def mqttPayload = [
-        transactionId : "HUBITAT_${now}",
+        transactionId : "HUBITAT_${stamp}",
         device_name   : state.deviceId,
         serial_number : state.serialNumber,
     ] + fields
@@ -700,22 +785,32 @@ void publishCommand(Map fields) {
         timeout   : 15,
     ]
 
+    boolean ok      = false
+    boolean expired = false
     try {
         httpPost(params) { resp ->
-            if (resp.status == 200) {
-                logDebug "Command published OK: ${fields}"
-                runIn(5, "fetchEquipment")
-            } else if (resp.status == 401) {
-                log.warn "EcoNet WH token expired during command — re-authenticating"
-                state.userToken = null
-                login()
-            } else {
-                log.error "EcoNet WH publishCommand HTTP ${resp.status}"
-            }
+            if (resp.status == 200)      ok = true
+            else if (resp.status == 401) expired = true
+            else log.error "EcoNet WH publishCommand HTTP ${resp.status} — body: ${resp.data}"
         }
     } catch (Exception e) {
-        log.error "EcoNet WH publishCommand exception: ${e.message}"
+        if (httpErrorStatus(e) == 401) expired = true
+        else log.error "EcoNet WH publishCommand exception: ${e.message}"
     }
+
+    if (expired) {
+        handleUnauthorized("command")
+        // login() is synchronous, so if it worked a new token is already in place: send once more
+        if (!isRetry && state.userToken) return publishCommand(fields, true)
+        log.error "EcoNet WH: command not sent: ${fields}"
+        return false
+    }
+    if (ok) {
+        logDebug "Command published OK: ${fields}"
+        // Re-poll after 5 s to confirm the device accepted the change
+        runIn(5, "fetchEquipment")
+    }
+    return ok
 }
 
 // ---------------------------------------------------------------------------

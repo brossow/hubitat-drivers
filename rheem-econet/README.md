@@ -91,6 +91,8 @@ The driver only selects by serial. If you enter a name, it tells you so in the l
 
 If the serial you entered doesn't match anything, or matches more than one unit, the driver **logs an error and controls nothing** rather than falling back to a guess. A device that shows no data is a device you'll go look at; a device quietly running the wrong thermostat is not. Check the **Logs** tab — the error says exactly what went wrong.
 
+The one exception is a unit that is on the account but reporting an error to EcoNet, which usually means it's offline. The driver recognises that it's still your unit, sets `online` to `false`, logs one warning, and picks up again by itself when the unit recovers. Nothing needs changing.
+
 ### Zoned systems
 
 Zones are discovered along with their parent thermostat and get their own rows. A zone that doesn't report a serial number of its own is identified by its internal device id instead, which works the same way — copy the row's identifier into the preference. This path is implemented but has never been tested on real hardware; reports welcome.
@@ -111,7 +113,7 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 - `fanOnly()` command, so dashboards and Rule Machine can reach fan-only mode (the standard `Thermostat` mode list has no entry for it)
 - Away mode (`awayMode` attribute + `setAwayMode()` command)
 - Configurable poll interval; automatic token re-auth on expiry
-- Failed logins back off (2 minutes, doubling up to an hour) rather than retrying on every poll; rejected credentials wait the full hour
+- Failed logins back off (2 minutes, doubling up to an hour) rather than retrying on every poll; rejected credentials wait the full hour. `refresh()` respects the wait too, so a rule that refreshes on a timer can't keep retrying a wrong password — Save Preferences to retry immediately
 - Supports multiple thermostats on one account, selected by serial number
 
 ### Supported HVAC Modes
@@ -119,6 +121,8 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 
 ### Supported Fan Speeds
 `auto` · `low` · `medium` · `high` · `max`
+
+Only the speeds your unit offers will work. Units with `Med.Lo` and `Med.Hi` report both as `medium`; on a unit without a plain `Medium`, setting `medium` picks `Med.Lo`.
 
 ### Capabilities
 `Thermostat` · `TemperatureMeasurement` · `Refresh` · `Initialize`
@@ -143,14 +147,14 @@ Earlier versions selected a unit with a **Thermostat index** preference. That se
 ### Features
 - Reads setpoint, operating mode, running state, and hot water tank level
 - Sets temperature, mode, and away mode
-- `Switch` capability maps to water heater on/off (restores last active mode when turned on)
+- `Switch` capability maps to water heater on/off (restores last active mode when turned on). Vacation mode counts as off
 - `ThermostatMode` capability exposes `heat` / `auto` / `emergency heat` / `off` for Rule Machine compatibility
 - Handles all three EcoNet control styles: `@MODE` only, `@ENABLED` only, or both
 - Mode list is read dynamically from the device — never hardcoded
 - Correctly resolves the firmware's dual-mode `ELECTRICGAS` entry based on device type (gas vs. electric)
 - Celsius/Fahrenheit selectable in preferences
 - Configurable poll interval; automatic token re-auth on expiry
-- Failed logins back off (2 minutes, doubling up to an hour) rather than retrying on every poll; rejected credentials wait the full hour
+- Failed logins back off (2 minutes, doubling up to an hour) rather than retrying on every poll; rejected credentials wait the full hour. `refresh()` respects the wait too — Save Preferences to retry immediately
 
 ### Supported Modes
 `off` · `electric` · `energy saving` · `heat pump` · `high demand` · `gas` · `performance` · `vacation`
@@ -166,7 +170,7 @@ Not all modes are available on every device — `supportedModes` attribute refle
 |---|---|---|
 | `waterHeaterMode` | string | Current operating mode |
 | `supportedModes` | JSON array | Modes supported by this device |
-| `thermostatMode` | `heat` / `auto` / `emergency heat` / `off` | RM-compatible mode derived from water heater mode |
+| `thermostatMode` | `heat` / `auto` / `emergency heat` / `off` | RM-compatible mode derived from water heater mode. There is no cooling mode: `cool()` logs a warning and does nothing |
 | `supportedThermostatModes` | JSON array | RM thermostat modes available on this device |
 | `hotWaterLevel` | 0 / 33 / 66 / 100 | Tank hot water availability |
 | `awayMode` | `away` / `home` | Away mode state |

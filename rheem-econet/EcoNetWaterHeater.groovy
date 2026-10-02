@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.3.2
+ * Version: 0.3.3
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -109,6 +109,10 @@ metadata {
     "vacation"     : "VACATION",
 ]
 
+// Modes in which the heater is not keeping water hot. Off for the Switch capability as
+// well as for thermostatMode, so the two never disagree; on() restores the last other mode.
+@Field List INACTIVE_MODES = ["off", "vacation"]
+
 // Water heater display name → Hubitat thermostat mode (for Rule Machine compatibility)
 @Field Map WH_MODE_TO_THERMOSTAT = [
     "off"          : "off",
@@ -155,7 +159,19 @@ def initialize() {
 }
 
 def refresh() {
-    if (!state.userToken) { login() } else { fetchEquipment() }
+    if (state.userToken) {
+        fetchEquipment()
+        return
+    }
+    // A rule calling refresh() on a timer must not undo the backoff: with a rejected
+    // password that would retry it every minute against the account the Rheem app uses.
+    if (loginBackoffActive()) {
+        int wait = (((state.loginRetryAt as Long) - now()) / 1000) as int
+        log.info "EcoNet WH: not logged in — the next login attempt is in ${describeDelay(wait)}. " +
+                 "Save Preferences on this device to retry now."
+        return
+    }
+    login()
 }
 
 // Switch capability
@@ -262,7 +278,9 @@ boolean loginBackoffActive() {
 }
 
 String describeDelay(int seconds) {
-    return seconds >= 3600 ? "1 hour" : "${(seconds / 60) as Integer} minutes"
+    if (seconds >= 3600) return "1 hour"
+    int minutes = Math.max(1, Math.ceil(seconds / 60.0) as int)
+    return minutes == 1 ? "1 minute" : "${minutes} minutes"
 }
 
 // A 401 means the session token expired: log in again — unless we only just did, in
@@ -328,14 +346,27 @@ def fetchEquipment() {
 void parseLocations(List locations) {
     def waterHeaters = []
     def places       = []   // parallel to waterHeaters: location name for each, may be null
+    def unavailable  = []   // units the API flags with an error
     locations.each { loc ->
         def place = loc?.name ?: loc?.location_name
         loc?.equiptments?.each { equip ->   // NOTE: "equiptments" is a typo in the API
-            if (equip?.device_type == "WH" && !equip?.error) {
+            if (equip?.device_type != "WH") return
+            if (equip?.error) {
+                unavailable << equip
+            } else {
                 waterHeaters << equip
                 places       << place
             }
         }
+    }
+
+    // The pinned unit is on the account but reporting an error — usually offline. Say
+    // that, rather than "no water heater has this serial", and keep its identity: it is
+    // still the right unit, and it will be back.
+    def down = unavailable.find { selectionMatches(it) }
+    if (down) {
+        reportUnavailable(down)
+        return
     }
 
     if (waterHeaters.isEmpty()) {
@@ -378,7 +409,28 @@ void parseLocations(List locations) {
     state.setpointLow   = equip["@SETPOINT"]?.constraints?.lowerLimit
     state.setpointHigh  = equip["@SETPOINT"]?.constraints?.upperLimit
 
+    if (state.unavailableLogged) {
+        state.remove("unavailableLogged")
+        log.info "EcoNet WH: water heater ${unitId(equip)} is reporting normally again."
+    }
     updateAttributes(equip)
+}
+
+/** True when the serial preference picks out this unit, by the same rule resolveIndex() uses. */
+boolean selectionMatches(def equip) {
+    def wanted = normalizeSerial(settings.deviceSerial?.trim())
+    def id     = normalizeSerial(unitId(equip))
+    return wanted && id && (id == wanted || (id.length() >= 6 && wanted.contains(id)))
+}
+
+void reportUnavailable(def equip) {
+    sendEvent(name: "online", value: "false")
+    // Once per outage, not once per poll
+    if (!state.unavailableLogged) {
+        state.unavailableLogged = true
+        log.warn "EcoNet WH: water heater ${unitId(equip)} is reporting an error to EcoNet (${equip.error}) — " +
+                 "usually it is offline. Showing it as offline and skipping updates until it recovers."
+    }
 }
 
 /**
@@ -429,13 +481,19 @@ int resolveIndex(List found) {
     if (!wanted) return adoptSelection(found)
 
     def wantNorm = normalizeSerial(wanted)
-    def hits     = []
+    def exact    = []
+    def inside   = []
     found.eachWithIndex { w, i ->
         def n = normalizeSerial(unitId(w))
-        // Exact match, or the identifier found inside a whole row pasted in.
-        // Length-guarded so a short id can't match by coincidence.
-        if (n && (n == wantNorm || (n.length() >= 6 && wantNorm.contains(n)))) hits << i
+        if (!n) return
+        if (n == wantNorm) exact << i
+        // Or the identifier found inside a whole row pasted in. Length-guarded so a
+        // short id can't match by coincidence.
+        else if (n.length() >= 6 && wantNorm.contains(n)) inside << i
     }
+    // An exact match wins outright, so one unit's id appearing inside another's can't
+    // turn a precise selection into an ambiguous one.
+    def hits = exact ?: inside
 
     if (hits.size() == 1) return hits[0] as int
 
@@ -521,12 +579,10 @@ void updateAttributes(Map equip) {
     def modeDisplay = resolveModeDisplay(equip)
     if (modeDisplay != null) {
         sendEvent(name: "waterHeaterMode", value: modeDisplay)
-        sendEvent(name: "switch",          value: (modeDisplay == "off") ? "off" : "on")
+        sendEvent(name: "switch",          value: (modeDisplay in INACTIVE_MODES) ? "off" : "on")
         def tMode = WH_MODE_TO_THERMOSTAT[modeDisplay]
         if (tMode) sendEvent(name: "thermostatMode", value: tMode)
-        if (modeDisplay != "off" && modeDisplay != "vacation") {
-            state.lastActiveMode = modeDisplay
-        }
+        if (!(modeDisplay in INACTIVE_MODES)) state.lastActiveMode = modeDisplay
     }
 
     // Supported modes (read dynamically from device — never hardcoded)
@@ -662,10 +718,10 @@ def setWaterHeaterMode(String mode) {
     if (payload == null) return   // error already logged in buildModePayload
     if (!publishCommand(payload)) return
     sendEvent(name: "waterHeaterMode", value: mode)
-    sendEvent(name: "switch",          value: (mode == "off") ? "off" : "on")
+    sendEvent(name: "switch",          value: (mode in INACTIVE_MODES) ? "off" : "on")
     def tMode = WH_MODE_TO_THERMOSTAT[mode]
     if (tMode) sendEvent(name: "thermostatMode", value: tMode)
-    if (mode != "off" && mode != "vacation") state.lastActiveMode = mode
+    if (!(mode in INACTIVE_MODES)) state.lastActiveMode = mode
 }
 
 def setAwayMode(String mode) {
@@ -696,6 +752,9 @@ def setThermostatMode(String thermostatMode) {
             if (supported.contains("high demand")) setWaterHeaterMode("high demand")
             else log.warn "EcoNet WH: 'high demand' mode not available on this device"
             break
+        case "cool":
+            log.warn "EcoNet WH: a water heater has no cooling mode — '${thermostatMode}' ignored"
+            break
         default:
             log.warn "EcoNet WH: unsupported thermostat mode '${thermostatMode}'"
     }
@@ -704,6 +763,10 @@ def setThermostatMode(String thermostatMode) {
 def heat()          { setThermostatMode("heat") }
 def auto()          { setThermostatMode("auto") }
 def emergencyHeat() { setThermostatMode("emergency heat") }
+
+// The ThermostatMode capability declares cool(), and a dashboard tile or rule can call
+// it. Without a definition that call throws MissingMethodException.
+def cool()          { setThermostatMode("cool") }
 
 // Build the MQTT payload for a mode change.
 // Correctly handles all three device control styles and the ELECTRICGAS dual-mode entry.

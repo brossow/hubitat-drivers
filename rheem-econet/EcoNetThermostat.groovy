@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.3.2
+ * Version: 0.3.3
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.rheemconnect.com.
@@ -140,11 +140,19 @@ def initialize() {
 }
 
 def refresh() {
-    if (!state.userToken) {
-        login()
-    } else {
+    if (state.userToken) {
         fetchEquipment()
+        return
     }
+    // A rule calling refresh() on a timer must not undo the backoff: with a rejected
+    // password that would retry it every minute against the account the Rheem app uses.
+    if (loginBackoffActive()) {
+        int wait = (((state.loginRetryAt as Long) - now()) / 1000) as int
+        log.info "EcoNet: not logged in — the next login attempt is in ${describeDelay(wait)}. " +
+                 "Save Preferences on this device to retry now."
+        return
+    }
+    login()
 }
 
 // ---------------------------------------------------------------------------
@@ -230,7 +238,9 @@ boolean loginBackoffActive() {
 }
 
 String describeDelay(int seconds) {
-    return seconds >= 3600 ? "1 hour" : "${(seconds / 60) as Integer} minutes"
+    if (seconds >= 3600) return "1 hour"
+    int minutes = Math.max(1, Math.ceil(seconds / 60.0) as int)
+    return minutes == 1 ? "1 minute" : "${minutes} minutes"
 }
 
 // A 401 means the session token expired: log in again — unless we only just did, in
@@ -296,19 +306,31 @@ def fetchEquipment() {
 void parseLocations(List locations) {
     def thermostats = []
     def places      = []   // parallel to thermostats: location name for each, may be null
+    def unavailable = []   // units the API flags with an error, zones included
     locations.each { loc ->
         def place = loc?.name ?: loc?.location_name
         // NOTE: "equiptments" is a typo in the actual API response
         loc?.equiptments?.each { equip ->
-            if (equip?.device_type == "HVAC" && !equip?.error) {
-                thermostats << equip
-                places      << place
-                equip?.zoning_devices?.each { zone ->
-                    thermostats << zone
+            if (equip?.device_type != "HVAC") return
+            def units = [equip] + (equip?.zoning_devices ?: [])
+            if (equip?.error) {
+                unavailable.addAll(units)
+            } else {
+                units.each { unit ->
+                    thermostats << unit
                     places      << place
                 }
             }
         }
+    }
+
+    // The pinned unit is on the account but reporting an error — usually offline. Say
+    // that, rather than "no thermostat has this serial", and keep its identity: it is
+    // still the right unit, and it will be back.
+    def down = unavailable.find { selectionMatches(it) }
+    if (down) {
+        reportUnavailable(down)
+        return
     }
 
     if (thermostats.isEmpty()) {
@@ -355,7 +377,28 @@ void parseLocations(List locations) {
     state.coolSpHigh = equip["@COOLSETPOINT"]?.constraints?.upperLimit
     state.deadband   = equip["@DEADBAND"]?.value ?: 2
 
+    if (state.unavailableLogged) {
+        state.remove("unavailableLogged")
+        log.info "EcoNet: thermostat ${unitId(equip)} is reporting normally again."
+    }
     updateAttributes(equip)
+}
+
+/** True when the serial preference picks out this unit, by the same rule resolveIndex() uses. */
+boolean selectionMatches(def equip) {
+    def wanted = normalizeSerial(settings.deviceSerial?.trim())
+    def id     = normalizeSerial(unitId(equip))
+    return wanted && id && (id == wanted || (id.length() >= 6 && wanted.contains(id)))
+}
+
+void reportUnavailable(def equip) {
+    sendEvent(name: "online", value: "false")
+    // Once per outage, not once per poll
+    if (!state.unavailableLogged) {
+        state.unavailableLogged = true
+        log.warn "EcoNet: thermostat ${unitId(equip)} is reporting an error to EcoNet (${equip.error}) — usually " +
+                 "it is offline. Showing it as offline and skipping updates until it recovers."
+    }
 }
 
 /**
@@ -406,13 +449,19 @@ int resolveIndex(List found) {
     if (!wanted) return adoptSelection(found)
 
     def wantNorm = normalizeSerial(wanted)
-    def hits     = []
+    def exact    = []
+    def inside   = []
     found.eachWithIndex { t, i ->
         def n = normalizeSerial(unitId(t))
-        // Exact match, or the identifier found inside a whole row pasted in.
-        // Length-guarded so a short id can't match by coincidence.
-        if (n && (n == wantNorm || (n.length() >= 6 && wantNorm.contains(n)))) hits << i
+        if (!n) return
+        if (n == wantNorm) exact << i
+        // Or the identifier found inside a whole row pasted in. Length-guarded so a
+        // short id can't match by coincidence.
+        else if (n.length() >= 6 && wantNorm.contains(n)) inside << i
     }
+    // An exact match wins outright. Otherwise a zone whose id is its parent's serial
+    // plus a suffix would also "contain" the parent, and pinning the zone would fail.
+    def hits = exact ?: inside
 
     if (hits.size() == 1) return hits[0] as int
 
@@ -500,11 +549,22 @@ void updateAttributes(Map equip) {
     // HVAC mode
     def modeIndex   = equip["@MODE"]?.value
     def modeTexts   = equip["@MODE"]?.constraints?.enumText ?: state.modeEnumText
-    def hubMode     = "off"
+    def hubMode     = null
     if (modeIndex != null && modeTexts && modeIndex < modeTexts.size()) {
         def econetKey  = modeTexts[modeIndex].trim().replace(" ", "").toUpperCase()
-        hubMode = ECONET_MODE_TO_HUB[econetKey] ?: "off"
-        sendEvent(name: "thermostatMode", value: hubMode)
+        hubMode = ECONET_MODE_TO_HUB[econetKey]
+        if (hubMode) {
+            sendEvent(name: "thermostatMode", value: hubMode)
+            state.remove("unknownModeLogged")
+        } else {
+            // Reporting an unknown mode as "off" would tell a rule the system is off while
+            // it runs. Leave the last known mode in place and say what was seen, once.
+            def seen = modeTexts[modeIndex].toString()
+            if (state.unknownModeLogged != seen) {
+                state.unknownModeLogged = seen
+                log.warn "EcoNet: unrecognized mode '${seen}' — thermostatMode left unchanged"
+            }
+        }
 
         // Supported modes list
         def supportedModes = modeTexts.collect { t ->
@@ -562,11 +622,23 @@ void updateAttributes(Map equip) {
         def supportedFanModes = fanSpeedTexts.collect { t ->
             ECONET_FAN_TO_HUB[fanKey(t as String)]
         }.findAll { it != null }.unique()
-        // Hubitat thermostatFanMode expects "auto" / "circulate" / "on"
-        // Map fanSpeed → thermostatFanMode for the capability
-        sendEvent(name: "thermostatFanMode", value: (hubFan == "auto") ? "auto" : "circulate")
+        // Hubitat thermostatFanMode expects "auto" / "circulate" / "on". A unit with
+        // @FANMODE is commanded through it, so it is read from it too (below); here the
+        // mode is inferred from the speed only for units without one.
+        if (equip["@FANMODE"] == null) {
+            sendEvent(name: "thermostatFanMode", value: (hubFan == "auto") ? "auto" : "circulate")
+        }
         sendEvent(name: "supportedThermostatFanModes",
                   value: JsonOutput.toJson(supportedFanModes.collect { it == "auto" ? "auto" : "circulate" }.unique()))
+    }
+
+    // Fan mode, on units that expose it: setThermostatFanMode() writes @FANMODE, so
+    // reading the speed instead would flip the tile back on the next poll.
+    def fanModeIndex = equip["@FANMODE"]?.value
+    def fanModeTexts = equip["@FANMODE"]?.constraints?.enumText ?: state.fanModeEnumText
+    if (fanModeIndex != null && fanModeTexts && fanModeIndex < fanModeTexts.size()) {
+        def key = (fanModeTexts[fanModeIndex] as String).trim().replace(" ", "_").replace("/", "_").toUpperCase()
+        sendEvent(name: "thermostatFanMode", value: (key == "AUTO") ? "auto" : "circulate")
     }
 
     // Humidity
@@ -744,6 +816,11 @@ def setFanSpeed(String speed) {
 
     def idx = findEnumIndex(enumText) { text ->
         fanKey(text as String) == targetKey
+    }
+    // Med.Lo and Med.Hi both read back as "medium", so on a unit with no plain Medium
+    // "medium" has to be settable too, or the value the driver reports can't be set.
+    if (idx == null && targetKey == "MEDIUM") {
+        idx = findEnumIndex(enumText) { text -> fanKey(text as String) in ["MEDLO", "MEDHI"] }
     }
     if (idx == null) { log.warn "Fan speed '${targetKey}' not found in ${enumText}"; return }
 

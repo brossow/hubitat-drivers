@@ -138,7 +138,12 @@ def initialize() {
     state.clear()
     if (lastActiveMode) state.lastActiveMode = lastActiveMode
     // Renamed to supportedWaterHeaterModes in 0.4.0; don't leave the old value showing.
-    device.deleteCurrentState("supportedModes")
+    // Cosmetic only, so it must never stop the driver starting.
+    try {
+        device.deleteCurrentState("supportedModes")
+    } catch (Exception e) {
+        logDebug "Could not clear the old supportedModes attribute: ${e.message}"
+    }
     startSession()
 }
 

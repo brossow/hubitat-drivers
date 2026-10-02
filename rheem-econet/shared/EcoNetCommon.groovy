@@ -563,11 +563,10 @@ def toDisplayTemp(Number fahrenheit) {
     return fahrenheit as BigDecimal
 }
 
+/** To whole °F, as the API takes it. Rounded, not truncated: 70.5 is 71, not 70. */
 def toFahrenheit(Number temp) {
-    if (settings.tempUnit == "C") {
-        return (((temp * 9 / 5) + 32) as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
-    }
-    return temp as BigDecimal
+    def f = (settings.tempUnit == "C") ? ((temp * 9 / 5) + 32) : temp
+    return (f as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
 }
 
 /**

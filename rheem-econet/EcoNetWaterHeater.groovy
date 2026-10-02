@@ -329,9 +329,11 @@ def setHeatingSetpoint(temp) {
         log.error "EcoNet WH: setpoint ${t}${unit} out of range [${lo}–${hi}]"
         return
     }
-    if (!publishCommand(["@SETPOINT": toFahrenheit(t).intValue()])) return
-    sendEvent(name: "heatingSetpoint",    value: t, unit: unit)
-    sendEvent(name: "thermostatSetpoint", value: t, unit: unit)
+    int tempF = toFahrenheit(t).intValue()
+    if (!publishCommand(["@SETPOINT": tempF])) return
+    // Report what was actually sent (whole °F), so the tile doesn't change again on the next poll
+    sendEvent(name: "heatingSetpoint",    value: toDisplayTemp(tempF), unit: unit)
+    sendEvent(name: "thermostatSetpoint", value: toDisplayTemp(tempF), unit: unit)
 }
 
 def setWaterHeaterMode(String mode) {
@@ -1003,11 +1005,10 @@ def toDisplayTemp(Number fahrenheit) {
     return fahrenheit as BigDecimal
 }
 
+/** To whole °F, as the API takes it. Rounded, not truncated: 70.5 is 71, not 70. */
 def toFahrenheit(Number temp) {
-    if (settings.tempUnit == "C") {
-        return (((temp * 9 / 5) + 32) as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
-    }
-    return temp as BigDecimal
+    def f = (settings.tempUnit == "C") ? ((temp * 9 / 5) + 32) : temp
+    return (f as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
 }
 
 /**

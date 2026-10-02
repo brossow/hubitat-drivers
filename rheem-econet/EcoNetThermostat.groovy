@@ -315,8 +315,10 @@ def fanOnly() {
     setThermostatMode("fan only")
 }
 
-def setHeatingSetpoint(BigDecimal temp) {
-    logDebug "setHeatingSetpoint(${temp})"
+// Untyped on purpose: dashboards, rules and Maker API pass numbers of every type, or text.
+def setHeatingSetpoint(value) {
+    logDebug "setHeatingSetpoint(${value})"
+    BigDecimal temp = value as BigDecimal
     def unit = tempUnitLabel()
     def lo = toDisplayTemp(state.heatSpLow as Integer ?: 40)
     def hi = toDisplayTemp(state.heatSpHigh as Integer ?: 90)
@@ -346,12 +348,15 @@ def setHeatingSetpoint(BigDecimal temp) {
         }
     }
     if (!publishCommand(payload)) return
-    sendEvent(name: "heatingSetpoint", value: temp, unit: unit)
+    // Report what was actually sent (whole °F), so the tile doesn't change again on the next poll
+    sendEvent(name: "heatingSetpoint", value: toDisplayTemp(tempF), unit: unit)
     if (newCoolF != null) sendEvent(name: "coolingSetpoint", value: toDisplayTemp(newCoolF), unit: unit)
 }
 
-def setCoolingSetpoint(BigDecimal temp) {
-    logDebug "setCoolingSetpoint(${temp})"
+// Untyped on purpose: dashboards, rules and Maker API pass numbers of every type, or text.
+def setCoolingSetpoint(value) {
+    logDebug "setCoolingSetpoint(${value})"
+    BigDecimal temp = value as BigDecimal
     def unit = tempUnitLabel()
     def lo = toDisplayTemp(state.coolSpLow as Integer ?: 60)
     def hi = toDisplayTemp(state.coolSpHigh as Integer ?: 99)
@@ -381,7 +386,7 @@ def setCoolingSetpoint(BigDecimal temp) {
         }
     }
     if (!publishCommand(payload)) return
-    sendEvent(name: "coolingSetpoint", value: temp, unit: unit)
+    sendEvent(name: "coolingSetpoint", value: toDisplayTemp(tempF), unit: unit)
     if (newHeatF != null) sendEvent(name: "heatingSetpoint", value: toDisplayTemp(newHeatF), unit: unit)
 }
 
@@ -1032,11 +1037,10 @@ def toDisplayTemp(Number fahrenheit) {
     return fahrenheit as BigDecimal
 }
 
+/** To whole °F, as the API takes it. Rounded, not truncated: 70.5 is 71, not 70. */
 def toFahrenheit(Number temp) {
-    if (settings.tempUnit == "C") {
-        return (((temp * 9 / 5) + 32) as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
-    }
-    return temp as BigDecimal
+    def f = (settings.tempUnit == "C") ? ((temp * 9 / 5) + 32) : temp
+    return (f as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP)
 }
 
 /**

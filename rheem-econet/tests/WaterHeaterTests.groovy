@@ -201,10 +201,19 @@ class WaterHeaterTests {
         assert ctx.d.log.at("error").any { it.contains("out of range") }
     }
 
+    void testSetpointRoundsAndAcceptsText() {
+        def ctx = start()
+        ctx.d.exec("setHeatingSetpoint", 121.5d)
+        assert ctx.api.lastCommand() == ["@SETPOINT": 122]
+        ctx.d.exec("setHeatingSetpoint", "124")
+        assert ctx.api.lastCommand() == ["@SETPOINT": 124]
+    }
+
     void testCelsiusSetpoint() {
         def ctx = start([setpoint: 120], [tempUnit: "C"])
         assert ctx.d.current("heatingSetpoint") == 48.9
         ctx.d.exec("setHeatingSetpoint", 50)
         assert ctx.api.lastCommand() == ["@SETPOINT": 122]
+        assert ctx.d.current("heatingSetpoint") == 50.0
     }
 }

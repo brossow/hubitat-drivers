@@ -181,7 +181,26 @@ class ThermostatTests {
         def ctx = start([mode: "Heating", heat: 68], [tempUnit: "C"])
         ctx.d.exec("setHeatingSetpoint", 21.5)
         assert ctx.api.lastCommand() == ["@HEATSETPOINT": 71]
-        assert ctx.d.current("heatingSetpoint") == 21.5
+        assert ctx.d.current("heatingSetpoint") == 21.7, "reports the whole °F actually sent"
+    }
+
+    void testSetpointsRoundToWholeFahrenheit() {
+        def ctx = start([mode: "Heating", heat: 68])
+        ctx.d.exec("setHeatingSetpoint", 70.5d)
+        assert ctx.api.lastCommand() == ["@HEATSETPOINT": 71]
+        assert ctx.d.current("heatingSetpoint") == 71
+        ctx.d.exec("setHeatingSetpoint", 70.4f)
+        assert ctx.api.lastCommand() == ["@HEATSETPOINT": 70]
+    }
+
+    void testSetpointsAcceptAnyNumberTypeOrText() {
+        def ctx = start([mode: "Auto", heat: 66, cool: 78])
+        [70, 70L, 70.0d, new BigDecimal("70"), "70"].each { v ->
+            ctx.d.exec("setHeatingSetpoint", v)
+            assert ctx.api.lastCommand() == ["@HEATSETPOINT": 70], v.getClass().simpleName
+        }
+        ctx.d.exec("setCoolingSetpoint", "76")
+        assert ctx.api.lastCommand() == ["@COOLSETPOINT": 76]
     }
 
     void testFanSpeedCommands() {

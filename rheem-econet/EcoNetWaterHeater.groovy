@@ -724,8 +724,10 @@ void parseLocations(List locations) {
 
     if (!state.rosterLogged) {
         state.rosterLogged = true
-        log.info "${LOG_TAG}: ${units.size()} ${UNIT_NOUN}(s) on this account — listed in the " +
-                 "${ROSTER_KEY}0…${ROSTER_KEY}${units.size() - 1} state variables, under State Variables on the device's Commands tab."
+        def where = units.size() == 1 ? "the ${ROSTER_KEY}0 state variable"
+                                      : "the ${ROSTER_KEY}0…${ROSTER_KEY}${units.size() - 1} state variables"
+        log.info "${LOG_TAG}: ${units.size()} ${UNIT_NOUN}${units.size() == 1 ? '' : 's'} on this account — listed in " +
+                 "${where}, under State Variables on the device's Commands tab."
         if (units.size() > 1) {
             log.info "${LOG_TAG}: this Hubitat device controls ${unitName(equip)} (${ROSTER_KEY}${idx}). Every other " +
                      "${UNIT_NOUN} needs its own Hubitat device using this same driver, with that unit's serial " +

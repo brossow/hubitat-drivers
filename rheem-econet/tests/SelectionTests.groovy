@@ -163,6 +163,16 @@ class SelectionTests {
         }
     }
 
+    void testRosterLogReadsNaturallyForOneOrSeveralUnits() {
+        KINDS.each { k ->
+            def one = start(k, [unitA(k)]).d.log.at("info").find { it.contains("on this account") }
+            assert one.contains("1 ${k.key == 'thermostat' ? 'thermostat' : 'water heater'} on this account")
+            assert one.contains("the ${k.key}0 state variable,")
+            def two = start(k, [unitA(k), unitB(k)], [deviceSerial: SERIAL_A]).d.log.at("info").find { it.contains("on this account") }
+            assert two.contains("the ${k.key}0…${k.key}1 state variables")
+        }
+    }
+
     void testRosterIncludesLocationName() {
         KINDS.each { k ->
             def d = start(k, [unitA(k)]).d

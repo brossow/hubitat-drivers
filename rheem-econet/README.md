@@ -11,6 +11,15 @@ Hubitat Elevation drivers for Rheem EcoNet thermostats and water heaters, inspir
 
 Each driver is self-contained — no parent app required.
 
+### What's been tested on real hardware
+
+| | Status |
+|---|---|
+| Thermostat: cool, heat, auto (heating and cooling), fan only, idle | Verified |
+| Thermostat: several thermostats on one account | Verified by a community user |
+| Thermostat: zoned systems | Not yet tested — reports welcome |
+| Water heater | **Not yet tested on any real water heater** — reports welcome |
+
 ---
 
 ## Installation
@@ -27,8 +36,12 @@ Two things to know before you start, because both surprise people:
 **Manually:**
 
 1. In Hubitat, go to **Drivers Code → New Driver**
-2. Paste the entire contents of [`EcoNetThermostat.groovy`](EcoNetThermostat.groovy) into the editor and click **Save**
-3. If you also want the water heater driver, repeat with [`EcoNetWaterHeater.groovy`](EcoNetWaterHeater.groovy)
+2. Click **Import**, paste this URL, click **Import**, then **Save**:
+   `https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/EcoNetThermostat.groovy`
+3. If you also want the water heater driver, repeat with:
+   `https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/EcoNetWaterHeater.groovy`
+
+To update a manually installed driver later, open it under **Drivers Code** and click **Import** — the URL is already filled in.
 
 Installing the driver code doesn't create anything you can see under Devices yet. It only makes the driver available to choose in the next step.
 
@@ -95,7 +108,7 @@ The one exception is a unit that is on the account but reporting an error to Eco
 
 ### Zoned systems
 
-Zones are discovered along with their parent thermostat and get their own rows. A zone that doesn't report a serial number of its own is identified by its internal device id instead, which works the same way — copy the row's identifier into the preference. This path is implemented but has never been tested on real hardware; reports welcome.
+Zones are discovered along with their parent thermostat and get their own rows. A zone that doesn't report a serial number of its own is identified by its internal device id instead, which works the same way — copy the row's identifier into the preference. Several thermostats on one account have been confirmed working; zones specifically have not been tested on real hardware yet, so reports are welcome.
 
 ### Upgrading from 0.1.x
 
@@ -129,6 +142,23 @@ Only the speeds your unit offers will work. Units with `Med.Lo` and `Med.Hi` rep
 
 `TemperatureMeasurement` is declared alongside `Thermostat` on purpose: without it the hub's home page can't classify the device and shows it as an unknown type with no controls.
 
+### Attributes worth knowing
+
+Besides the standard `Thermostat` attributes:
+
+| Attribute | Values | Description |
+|---|---|---|
+| `thermostatOperatingState` | `heating` / `cooling` / `fan only` / `idle` | What the system is doing right now, read from the unit's running status — so it's right in auto mode too |
+| `thermostatSetpoint` | number | The heating setpoint in heat mode, the cooling setpoint in cool mode, and in auto the midpoint of the two (a half rounds up) |
+| `thermostatFanMode` | `auto` / `circulate` | Any running fan setting reads as `circulate`, including after `fanOn()`, because that is all the unit reports back |
+| `fanSpeed` | `auto` / `low` / `medium` / `high` / `max` | The unit's own fan speed |
+| `humidity` | % | Indoor relative humidity. A plain attribute rather than the humidity capability, which would make Hubitat file the device as a multisensor |
+| `awayMode` | `away` / `home` | Away mode state |
+| `online` | `true` / `false` | Whether EcoNet can reach the unit |
+| `runningState` | text | The unit's raw running status, for troubleshooting. Its wording comes from Rheem's firmware and may change — build rules on `thermostatOperatingState` instead |
+
+In auto mode the thermostat itself decides when to start heating or cooling, and it can wait for a bigger gap from the setpoint than it does in heat or cool mode.
+
 ### Preferences
 
 | Setting | Description |
@@ -137,7 +167,7 @@ Only the speeds your unit offers will work. Units with `Med.Lo` and `Med.Hi` rep
 | EcoNet Password | Your Rheem EcoNet account password |
 | Thermostat Serial Number | Which thermostat this device controls. Filled in automatically on first connect; set it yourself to choose a different one, copying from the `thermostat0` / `thermostat1` / … state variables on the Commands tab. |
 | Poll Interval | How often to refresh state from the cloud (default: 5 minutes) |
-| Temperature Unit | °F or °C for reported temperatures and setpoints (default: F). The API always works in Fahrenheit; the driver converts both ways. |
+| Temperature Unit | °F or °C for reported temperatures and setpoints. A new device starts with your hub's own scale. The API always works in Fahrenheit; the driver converts both ways. |
 | Enable Debug Logging | Logs detailed info to the Hubitat log (auto-disables after 30 minutes) |
 
 ---
@@ -159,7 +189,7 @@ Only the speeds your unit offers will work. Units with `Med.Lo` and `Med.Hi` rep
 ### Supported Modes
 `off` · `electric` · `energy saving` · `heat pump` · `high demand` · `gas` · `performance` · `vacation`
 
-Not all modes are available on every device — `supportedModes` attribute reflects what the device actually reports.
+Not all modes are available on every device — the `supportedWaterHeaterModes` attribute reflects what the device actually reports.
 
 ### Capabilities
 `Switch` · `ThermostatHeatingSetpoint` · `ThermostatOperatingState` · `ThermostatMode` · `Refresh` · `Initialize`
@@ -169,7 +199,7 @@ Not all modes are available on every device — `supportedModes` attribute refle
 | Attribute | Values | Description |
 |---|---|---|
 | `waterHeaterMode` | string | Current operating mode |
-| `supportedModes` | JSON array | Modes supported by this device |
+| `supportedWaterHeaterModes` | JSON array | Modes supported by this device (called `supportedModes` before 0.4.0) |
 | `thermostatMode` | `heat` / `auto` / `emergency heat` / `off` | RM-compatible mode derived from water heater mode. There is no cooling mode: `cool()` logs a warning and does nothing |
 | `supportedThermostatModes` | JSON array | RM thermostat modes available on this device |
 | `hotWaterLevel` | 0 / 33 / 66 / 100 | Tank hot water availability |
@@ -183,7 +213,7 @@ Not all modes are available on every device — `supportedModes` attribute refle
 | EcoNet Email | Your Rheem EcoNet account email |
 | EcoNet Password | Your Rheem EcoNet account password |
 | Water Heater Serial Number | Which water heater this device controls. Filled in automatically on first connect; set it yourself to choose a different one, copying from the `waterHeater0` / `waterHeater1` / … state variables on the Commands tab. |
-| Temperature Unit | `F` (default) or `C` |
+| Temperature Unit | `F` or `C`. A new device starts with your hub's own scale. |
 | Poll Interval | How often to refresh state from the cloud (default: 5 minutes) |
 | Enable Debug Logging | Logs detailed info to the Hubitat log (auto-disables after 30 minutes) |
 
@@ -194,6 +224,19 @@ Not all modes are available on every device — `supportedModes` attribute refle
 - **Cloud-dependent**: All communication goes through Rheem's ClearBlade cloud API. Local control is not possible.
 - **Commands**: Sent via the ClearBlade REST messaging endpoint (`POST /api/v/1/message/{systemKey}/publish`), which proxies to the underlying MQTT broker — the same mechanism used by the Rheem mobile app.
 - **Multiple devices**: One Hubitat device controls one physical unit — see [If you have more than one thermostat or water heater](#if-you-have-more-than-one-thermostat-or-water-heater) above.
+
+## Asking for help
+
+Post in the [community thread](https://community.hubitat.com/t/drivers-rheem-econet-thermostat-water-heater/163127). It helps to include:
+
+- the driver version — on the device page, under **Data**, as `driverVersion`
+- a few minutes of the device's log with **Enable debug logging** on
+
+Logs are safe to paste publicly: since 0.4.0 they show only the last four characters of serial numbers and account ids, and never your full email address. (Don't paste the **State Variables** or **Preferences** — those hold the full serial number, because that's where you copy it from.)
+
+## Contributing
+
+See [DEVELOPING.md](DEVELOPING.md) — the drivers share code that is edited in one place and copied into both files by a build script, and there are off-hub tests.
 
 ## Credits
 

@@ -1,0 +1,19 @@
+definition: Rheem EcoNet Thermostat (brossow)
+capability Thermostat
+capability TemperatureMeasurement
+capability Refresh
+capability Initialize
+attribute humidity number
+attribute runningState string
+attribute fanSpeed string
+attribute online enum [true, false]
+attribute awayMode enum [away, home]
+command setFanSpeed [Fan Speed:ENUM[auto, low, medium, high, max]]
+command setAwayMode [Away Mode:ENUM[away, home]]
+command fanOnly
+input email text required
+input password password required
+input deviceSerial text
+input pollInterval enum [1 minute, 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour] default=5 minutes required
+input tempUnit enum [F, C] default=F required
+input logEnable bool default=false

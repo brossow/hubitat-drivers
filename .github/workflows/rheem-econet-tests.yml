@@ -1,0 +1,31 @@
+name: Rheem EcoNet tests
+
+on:
+  push:
+    paths:
+      - 'rheem-econet/**'
+      - '.github/workflows/rheem-econet-tests.yml'
+  pull_request:
+    paths:
+      - 'rheem-econet/**'
+      - '.github/workflows/rheem-econet-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      # Groovy 2.4, the line the hub runs, wants Java 8.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Shared code, versions and manifest are consistent
+        run: python3 rheem-econet/tools/build.py --check
+
+      - name: Off-hub tests
+        run: rheem-econet/tests/run.sh

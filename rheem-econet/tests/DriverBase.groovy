@@ -130,6 +130,7 @@ class HubLog {
 class FakeDevice {
     final DriverBase driver
     Map current = [:]
+    Map data = [:]
     List<String> deletedStates = []
 
     FakeDevice(DriverBase driver) { this.driver = driver }
@@ -147,5 +148,7 @@ class FakeDevice {
         deletedStates << name
         current.remove(name)
     }
+    void updateDataValue(String name, String value) { data[name] = value }
+    String getDataValue(String name) { data[name] }
     String getDisplayName() { "Test device" }
 }

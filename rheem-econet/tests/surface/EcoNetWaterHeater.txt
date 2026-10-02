@@ -1,0 +1,23 @@
+definition: Rheem EcoNet Water Heater (brossow)
+capability Actuator
+capability Sensor
+capability Switch
+capability ThermostatHeatingSetpoint
+capability ThermostatOperatingState
+capability ThermostatMode
+capability Refresh
+capability Initialize
+attribute waterHeaterMode string
+attribute supportedWaterHeaterModes string
+attribute thermostatSetpoint number
+attribute hotWaterLevel number
+attribute online enum [true, false]
+attribute awayMode enum [away, home]
+command setWaterHeaterMode [Mode:ENUM[off, electric, energy saving, heat pump, high demand, gas, performance, vacation]]
+command setAwayMode [Away Mode:ENUM[away, home]]
+input email text required
+input password password required
+input deviceSerial text
+input tempUnit enum [F, C] default=F required
+input pollInterval enum [1 minute, 5 minutes, 10 minutes, 15 minutes, 30 minutes, 1 hour] default=5 minutes required
+input logEnable bool default=false

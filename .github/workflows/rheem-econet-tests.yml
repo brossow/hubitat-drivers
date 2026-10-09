@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'rheem-econet/**'
+      - 'tools/groovy-jar.sh'
       - '.github/workflows/rheem-econet-tests.yml'
   pull_request:
     paths:
       - 'rheem-econet/**'
+      - 'tools/groovy-jar.sh'
       - '.github/workflows/rheem-econet-tests.yml'
 
 jobs:

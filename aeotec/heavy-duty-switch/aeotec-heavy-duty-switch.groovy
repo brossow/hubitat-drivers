@@ -1,6 +1,7 @@
 /**
  *  Copyright (C) Sebastian YEPES — original work
  *  Copyright (C) Brent Rossow — modifications (v1.2.0+)
+ *  SPDX-License-Identifier: Apache-2.0
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -21,11 +22,19 @@
  *    - Removed powerlevelGet() from poll() and checkState() (Z-Wave signal level is not device state)
  *    - Changed on()/off() to use SwitchBinary commands (more correct than Basic for switch control)
  *    - Removed deprecated displayed: true parameter from sendEvent() calls in reset()
+ *  Changes in v1.2.1:
+ *    - Fixed Hail handler (parameter shadowed cmd(), so it threw instead of refreshing state)
+ *    - Save Preferences now sends the configuration to the device (updated() return values are ignored by Hubitat)
+ *    - configure() falls back to preference defaults when preferences have never been saved
+ *    - Stopped writing kVAh readings into the energy (kWh) attribute
+ *    - Removed generic fingerprints that could claim other metering switches at pairing
+ *    - Simplified command encapsulation to zwaveSecureEncap(); removed dead MultiChannel handler
+ *    - Firmware version stored as a padded string (1.05 vs 1.50 were indistinguishable)
  */
 
 import groovy.transform.Field
 
-@Field String VERSION = "1.2.0"
+@Field String VERSION = "1.2.1"
 
 @Field List<String> LOG_LEVELS = ["error", "warn", "info", "debug", "trace"]
 @Field String DEFAULT_LOG_LEVEL = LOG_LEVELS[1]
@@ -48,11 +57,9 @@ metadata {
     command "clearState"
     command "reset"
 
-    fingerprint inClusters: "0x25,0x32"
     fingerprint mfr: "0086", prod: "0103", model: "004E", deviceJoinName: "Aeotec Heavy Duty Smart Switch" //US
     fingerprint mfr: "0086", prod: "0003", model: "004E", deviceJoinName: "Aeotec Heavy Duty Smart Switch" //EU
     fingerprint mfr: "0086", prod: "0003", deviceId: "004E", inClusters: "0x5E,0x86,0x72,0x98,0x56", outClusters: "0x5A,0x82" //EU
-    fingerprint deviceId: "78", inClusters: "0x5E, 0x25, 0x32, 0x31, 0x27, 0x2C, 0x2B, 0x70, 0x85, 0x59, 0x56, 0x72, 0x86, 0x7A, 0x73, 0x98"
     fingerprint deviceId: "004E", inClusters: "0x5E,0x86,0x72,0x98,0x56", outClusters: "0x5A,0x82"
 
   }
@@ -105,12 +112,8 @@ def updated() {
     installed()
   }
 
-  if (!state.MSR) {
-    refresh()
-  }
-
-  unschedule()
-  configure()
+  // Hubitat ignores updated()'s return value, so the commands must be sent explicitly
+  sendHubCommand(new hubitat.device.HubMultiAction(configure(), hubitat.device.Protocol.ZWAVE))
 }
 
 def poll() {
@@ -120,7 +123,6 @@ def poll() {
     zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: (location.temperatureScale=="F"?1:0)),
     zwave.basicV1.basicGet(),
     zwave.meterV4.meterGet(scale: 0), // energy kWh
-    zwave.meterV4.meterGet(scale: 1), // energy kVAh
     zwave.meterV4.meterGet(scale: 2), // watts
     zwave.meterV4.meterGet(scale: 4), // volts
     zwave.meterV4.meterGet(scale: 5)  // amps
@@ -143,7 +145,6 @@ def refresh() {
     zwave.sensorMultilevelV5.sensorMultilevelGet(sensorType: 1, scale: (location.temperatureScale=="F"?1:0)),
     zwave.basicV1.basicGet(),
     zwave.meterV4.meterGet(scale: 0), // energy kWh
-    zwave.meterV4.meterGet(scale: 1), // energy kVAh
     zwave.meterV4.meterGet(scale: 2), // watts
     zwave.meterV4.meterGet(scale: 4), // volts
     zwave.meterV4.meterGet(scale: 5)  // amps
@@ -171,12 +172,14 @@ def off() {
 def configure() {
   logger("debug", "configure()")
   def cmds = []
-  def result = []
 
-  if (stateCheckInterval.toInteger()) {
-    String cron = (['5', '10', '15', '30'].contains(stateCheckInterval) ?
-      "6 */${stateCheckInterval} * ? * *" :
-      "6 0 */${stateCheckInterval} ? * *" );
+  unschedule()
+
+  Integer interval = settingInt("stateCheckInterval", 2)
+  if (interval) {
+    String cron = ([5, 10, 15, 30].contains(interval) ?
+      "6 */${interval} * ? * *" :
+      "6 0 */${interval} ? * *" );
 
     schedule(cron, checkState)
 
@@ -195,22 +198,22 @@ def configure() {
   }
 
   Integer reportGroup;
-  reportGroup = ("$param101_voltage" == "true" ? 1 : 0)
-  reportGroup += ("$param101_current" == "true" ? 2 : 0)
-  reportGroup += ("$param101_watts" == "true" ? 4 : 0)
-  reportGroup += ("$param101_currentUsage" == "true" ? 8 : 0)
+  reportGroup = (settingBool("param101_voltage", true) ? 1 : 0)
+  reportGroup += (settingBool("param101_current", true) ? 2 : 0)
+  reportGroup += (settingBool("param101_watts", true) ? 4 : 0)
+  reportGroup += (settingBool("param101_currentUsage", true) ? 8 : 0)
 
   cmds = cmds + cmdSequence([
     zwave.switchAllV1.switchAllSet(mode: switchAllMode),
     zwave.associationV2.associationSet(groupingIdentifier:1, nodeId:zwaveHubNodeId),
     zwave.associationV2.associationSet(groupingIdentifier:2, nodeId:zwaveHubNodeId),
-    zwave.configurationV1.configurationSet(parameterNumber: 3, size: 1, scaledConfigurationValue: param3.toInteger()),
-    zwave.configurationV1.configurationSet(parameterNumber: 20, size: 1, scaledConfigurationValue: param20.toInteger()),
-    zwave.configurationV1.configurationSet(parameterNumber: 80, size: 1, scaledConfigurationValue: param80.toInteger()),
+    zwave.configurationV1.configurationSet(parameterNumber: 3, size: 1, scaledConfigurationValue: settingInt("param3", 1)),
+    zwave.configurationV1.configurationSet(parameterNumber: 20, size: 1, scaledConfigurationValue: settingInt("param20", 0)),
+    zwave.configurationV1.configurationSet(parameterNumber: 80, size: 1, scaledConfigurationValue: settingInt("param80", 2)),
     zwave.configurationV1.configurationSet(parameterNumber: 90, size: 1, scaledConfigurationValue: 1),
-    zwave.configurationV1.configurationSet(parameterNumber: 91, size: 2, scaledConfigurationValue: param91.toInteger()),
-    zwave.configurationV1.configurationSet(parameterNumber: 92, size: 1, scaledConfigurationValue: param92.toInteger()),
-    zwave.configurationV1.configurationSet(parameterNumber: 111, size: 4, scaledConfigurationValue: param111.toInteger()),
+    zwave.configurationV1.configurationSet(parameterNumber: 91, size: 2, scaledConfigurationValue: settingInt("param91", 50)),
+    zwave.configurationV1.configurationSet(parameterNumber: 92, size: 1, scaledConfigurationValue: settingInt("param92", 10)),
+    zwave.configurationV1.configurationSet(parameterNumber: 111, size: 4, scaledConfigurationValue: settingInt("param111", 300)),
     zwave.configurationV1.configurationSet(parameterNumber: 112, size: 4, scaledConfigurationValue: 0),
     zwave.configurationV1.configurationSet(parameterNumber: 113, size: 4, scaledConfigurationValue: 0),
     zwave.configurationV1.configurationSet(parameterNumber: 101, size: 4, scaledConfigurationValue: reportGroup),
@@ -221,29 +224,27 @@ def configure() {
   if (!getDataValue("MSR")) {
     cmds = cmds + cmdSequence([
       zwave.versionV2.versionGet(),
-      zwave.firmwareUpdateMdV5.firmwareMdGet(),
+      zwave.firmwareUpdateMdV2.firmwareMdGet(),
       zwave.manufacturerSpecificV2.manufacturerSpecificGet(),
     ], 100)
   }
 
-  result = result + response(cmds)
-  logger("debug", "configure() - result: ${result.inspect()}")
+  logger("debug", "configure() - cmds: ${cmds.inspect()}")
 
-  result
+  cmds
 }
 
 def reset() {
   logger("debug", "reset()")
 
-  sendEvent(name: "power", value: "0", unit: "W")
-  sendEvent(name: "energy", value: "0", unit: "kWh")
-  sendEvent(name: "amperage", value: "0", unit: "A")
-  sendEvent(name: "voltage", value: "0", unit: "V")
+  sendEvent(name: "power", value: 0, unit: "W")
+  sendEvent(name: "energy", value: 0, unit: "kWh")
+  sendEvent(name: "amperage", value: 0, unit: "A")
+  sendEvent(name: "voltage", value: 0, unit: "V")
 
   cmdSequence([
     zwave.meterV4.meterReset(),
     zwave.meterV4.meterGet(scale: 0),
-    zwave.meterV4.meterGet(scale: 1),
     zwave.meterV4.meterGet(scale: 2),
     zwave.meterV4.meterGet(scale: 4),
     zwave.meterV4.meterGet(scale: 5)
@@ -317,9 +318,9 @@ def handleMeterReport(cmd){
         previousValue = device.currentValue("energy") ?: cmd.scaledPreviousMeterValue ?: 0
         map.value = cmd.scaledMeterValue
       break;
-      case 1: //kVAh
-        map.value = cmd.scaledMeterValue
-      break;
+      case 1: //kVAh - apparent energy, not kWh; don't let it overwrite the energy attribute
+        logger("debug", "handleMeterReport() - Ignoring kVAh report: ${cmd.scaledMeterValue}")
+        return result
       case 2: //Watts
         previousValue = device.currentValue("power") ?: cmd.scaledPreviousMeterValue ?: 0
         map.value = Math.round(cmd.scaledMeterValue)
@@ -435,8 +436,9 @@ def zwaveEvent(hubitat.zwave.commands.switchbinaryv1.SwitchBinaryReport cmd) {
   setSwitchEvent(cmd)
 }
 
-def zwaveEvent(hubitat.zwave.commands.hailv1.Hail cmd) {
-  logger("trace", "zwaveEvent(Hail) - cmd: ${cmd.inspect()}")
+def zwaveEvent(hubitat.zwave.commands.hailv1.Hail hail) {
+  // Not named cmd: a parameter called cmd would shadow the cmd() method below
+  logger("trace", "zwaveEvent(Hail) - cmd: ${hail.inspect()}")
   [response(cmd(zwave.basicV1.basicGet()))]
 }
 
@@ -448,7 +450,7 @@ def zwaveEvent(hubitat.zwave.commands.sensormultilevelv5.SensorMultilevelReport 
   switch (cmd.sensorType) {
     case 1:
       map.name = "temperature"
-      map.value = convertTemperatureIfNeeded(cmd.scaledSensorValue, cmd.scale == 1 ? "f" : "c", cmd.precision)
+      map.value = convertTemperatureIfNeeded(cmd.scaledSensorValue, cmd.scale == 1 ? "F" : "C", cmd.precision)
       map.unit = "°" + getTemperatureScale()
       map.descriptionText = "Temperature is ${map.value} ${map.unit}"
       map.displayed = true
@@ -481,17 +483,16 @@ void zwaveEvent(hubitat.zwave.commands.versionv1.VersionReport cmd) {
   logger("trace", "zwaveEvent(VersionReport) - cmd: ${cmd.inspect()}")
 
   if(cmd.applicationVersion != null && cmd.applicationSubVersion != null) {
-    String firmwareVersion = "${cmd.applicationVersion}.${cmd.applicationSubVersion.toString().padLeft(2,'0')}"
-    Double protocolVersion = cmd.zWaveProtocolVersion + (cmd.zWaveProtocolSubVersion / 100)
-    updateDataValue("firmware", "${firmwareVersion}")
-    state.deviceInfo['firmwareVersion'] = firmwareVersion
+    String firmware = versionString(cmd.applicationVersion, cmd.applicationSubVersion)
+    updateDataValue("firmware", firmware)
+    state.deviceInfo['firmwareVersion'] = firmware
+    state.deviceInfo['protocolVersion'] = versionString(cmd.zWaveProtocolVersion, cmd.zWaveProtocolSubVersion)
 
   } else if(cmd.firmware0Version != null && cmd.firmware0SubVersion != null) {
-    String firmware = "${cmd.firmware0Version}.${cmd.firmware0SubVersion.toString().padLeft(2,'0')}"
-    Double protocolVersion = cmd.zWaveProtocolVersion + (cmd.zWaveProtocolSubVersion / 100)
-    updateDataValue("firmware", "${firmware}")
+    String firmware = versionString(cmd.firmware0Version, cmd.firmware0SubVersion)
+    updateDataValue("firmware", firmware)
     state.deviceInfo['firmwareVersion'] = firmware
-    state.deviceInfo['protocolVersion'] = protocolVersion
+    state.deviceInfo['protocolVersion'] = versionString(cmd.zWaveProtocolVersion, cmd.zWaveProtocolSubVersion)
   }
   []
 }
@@ -499,17 +500,15 @@ void zwaveEvent(hubitat.zwave.commands.versionv1.VersionReport cmd) {
 void zwaveEvent(hubitat.zwave.commands.versionv2.VersionReport cmd) {
   logger("trace", "zwaveEvent(VersionReport) - cmd: ${cmd.inspect()}")
 
-  Double firmware0Version = cmd.firmware0Version + (cmd.firmware0SubVersion / 100)
-  Double protocolVersion = cmd.zWaveProtocolVersion + (cmd.zWaveProtocolSubVersion / 100)
-  updateDataValue("firmware", "${firmware0Version}")
-  state.deviceInfo['firmwareVersion'] = firmware0Version
-  state.deviceInfo['protocolVersion'] = protocolVersion
+  String firmware = versionString(cmd.firmware0Version, cmd.firmware0SubVersion)
+  updateDataValue("firmware", firmware)
+  state.deviceInfo['firmwareVersion'] = firmware
+  state.deviceInfo['protocolVersion'] = versionString(cmd.zWaveProtocolVersion, cmd.zWaveProtocolSubVersion)
   state.deviceInfo['hardwareVersion'] = cmd.hardwareVersion
 
   if (cmd.firmwareTargets > 0) {
     cmd.targetVersions.each { target ->
-      Double targetVersion = target.version + (target.subVersion / 100)
-      state.deviceInfo["firmware${target.target}Version"] = targetVersion
+      state.deviceInfo["firmware${target.target}Version"] = versionString(target.version, target.subVersion)
     }
   }
   []
@@ -518,17 +517,15 @@ void zwaveEvent(hubitat.zwave.commands.versionv2.VersionReport cmd) {
 void zwaveEvent(hubitat.zwave.commands.versionv3.VersionReport cmd) {
   logger("trace", "zwaveEvent(VersionReport) - cmd: ${cmd.inspect()}")
 
-  Double firmware0Version = cmd.firmware0Version + (cmd.firmware0SubVersion / 100)
-  Double protocolVersion = cmd.zWaveProtocolVersion + (cmd.zWaveProtocolSubVersion / 100)
-  updateDataValue("firmware", "${firmware0Version}")
-  state.deviceInfo['firmwareVersion'] = firmware0Version
-  state.deviceInfo['protocolVersion'] = protocolVersion
+  String firmware = versionString(cmd.firmware0Version, cmd.firmware0SubVersion)
+  updateDataValue("firmware", firmware)
+  state.deviceInfo['firmwareVersion'] = firmware
+  state.deviceInfo['protocolVersion'] = versionString(cmd.zWaveProtocolVersion, cmd.zWaveProtocolSubVersion)
   state.deviceInfo['hardwareVersion'] = cmd.hardwareVersion
 
   if (cmd.firmwareTargets > 0) {
     cmd.targetVersions.each { target ->
-      Double targetVersion = target.version + (target.subVersion / 100)
-      state.deviceInfo["firmware${target.target}Version"] = targetVersion
+      state.deviceInfo["firmware${target.target}Version"] = versionString(target.version, target.subVersion)
     }
   }
   []
@@ -581,7 +578,6 @@ def zwaveEvent(hubitat.zwave.commands.firmwareupdatemdv2.FirmwareMdReport cmd) {
 def zwaveEvent(hubitat.zwave.commands.securityv1.SecurityMessageEncapsulation cmd) {
   logger("trace", "zwaveEvent(SecurityMessageEncapsulation) - cmd: ${cmd.inspect()}")
 
-  setSecured()
   def encapsulatedCommand = cmd.encapsulatedCommand(getCommandClassVersions())
   if (encapsulatedCommand) {
     logger("trace", "zwaveEvent(SecurityMessageEncapsulation) - encapsulatedCommand: ${encapsulatedCommand}")
@@ -605,57 +601,15 @@ def zwaveEvent(hubitat.zwave.commands.crc16encapv1.Crc16Encap cmd) {
   }
 }
 
-def zwaveEvent(hubitat.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
-  logger("trace", "zwaveEvent(MultiChannelCmdEncap) - cmd: ${cmd.inspect()}")
-
-  def encapsulatedCommand = cmd.encapsulatedCommand(getCommandClassVersions())
-  if (encapsulatedCommand) {
-    logger("trace", "zwaveEvent(MultiChannelCmdEncap) - encapsulatedCommand: ${encapsulatedCommand}")
-    zwaveEvent(encapsulatedCommand, cmd.sourceEndPoint as Integer)
-  } else {
-    logger("warn", "zwaveEvent(MultiChannelCmdEncap) - Unable to extract MultiChannel command from: ${cmd.inspect()}")
-    []
-  }
-}
-
-def zwaveEvent(hubitat.zwave.commands.securityv1.SecurityCommandsSupportedReport cmd) {
-  logger("trace", "zwaveEvent(SecurityCommandsSupportedReport) - cmd: ${cmd.inspect()}")
-  setSecured()
-  []
-}
-
-def zwaveEvent(hubitat.zwave.commands.securityv1.NetworkKeyVerify cmd) {
-  logger("trace", "zwaveEvent(NetworkKeyVerify) - cmd: ${cmd.inspect()}")
-  logger("info", "Secure inclusion was successful")
-  setSecured()
-  []
-}
-
 def zwaveEvent(hubitat.zwave.Command cmd) {
   logger("warn", "zwaveEvent(Command) - Unhandled - cmd: ${cmd.inspect()}")
   []
 }
 
-private cmd(hubitat.zwave.Command cmd) {
-  logger("trace", "cmd(Command) - cmd: ${cmd.inspect()} isSecured(): ${isSecured()} S2: ${getDataValue("S2")}")
-
-  if (getDataValue("zwaveSecurePairingComplete") == "true" && getDataValue("S2") == null) {
-    zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
-  } else if (getDataValue("zwaveSecurePairingComplete") == "true") {
-    zwaveSecureEncap(cmd)
-  } else {
-    cmd.format()
-  }
-}
-
-String secure(String cmd) {
-  logger("trace", "secure(String) - cmd: ${cmd.inspect()}")
-  return zwaveSecureEncap(cmd)
-}
-
-String secure(hubitat.zwave.Command cmd) {
-  logger("trace", "secure(Command) - cmd: ${cmd.inspect()}")
-  return zwaveSecureEncap(cmd)
+private String cmd(hubitat.zwave.Command cmd) {
+  logger("trace", "cmd(Command) - cmd: ${cmd.inspect()}")
+  // The platform knows how the device was included (none/S0/S2) and encapsulates to match
+  zwaveSecureEncap(cmd)
 }
 
 private cmdSequence(Collection commands, Integer delayBetweenArgs=250) {
@@ -663,11 +617,17 @@ private cmdSequence(Collection commands, Integer delayBetweenArgs=250) {
   delayBetween(commands.collect{ cmd(it) }, delayBetweenArgs)
 }
 
-private setSecured() {
-  updateDataValue("zwaveSecurePairingComplete", "true")
+private String versionString(major, minor) {
+  "${major}.${minor.toString().padLeft(2,'0')}"
 }
-private isSecured() {
-  getDataValue("zwaveSecurePairingComplete") == "true"
+
+// Preferences have no values until they're saved once, so fall back to the declared defaults
+private Integer settingInt(String name, Integer defaultValue) {
+  settings[name] != null ? settings[name].toInteger() : defaultValue
+}
+
+private Boolean settingBool(String name, Boolean defaultValue) {
+  settings[name] != null ? settings[name].toString() == "true" : defaultValue
 }
 
 private getCommandClassVersions() {

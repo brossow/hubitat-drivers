@@ -127,3 +127,7 @@ This driver uses the [BirdWeather REST API](https://app.birdweather.com/api/v1):
 | `GET /stations/{id}/species?period=all&limit=100&page=N` | All-time species list |
 
 > **Note:** the `/species` endpoint silently caps `limit` at 100 and returns results sorted by detection count, highest first — a larger `limit` is accepted without error but ignored. The driver walks the list with `page` until a short page comes back; requesting it in one batch would quietly truncate to your 100 most-detected species.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

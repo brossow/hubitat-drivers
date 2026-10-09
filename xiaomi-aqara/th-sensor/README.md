@@ -97,7 +97,23 @@ HPM listing coming soon after initial testing.
 - **resetRestoredCounter** — Reset the presence-restore event counter to 0
 - **forceRecoveryMode(minutes)** — Manually trigger recovery polling for N minutes
 
+## Tests
+
+```sh
+tests/run.sh               # everything
+tests/run.sh pressure      # only tests whose name contains "pressure"
+```
+
+The off-hub tests load the driver into a small stand-in for the Hubitat sandbox and check the events it sends. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
+
 ## Changelog
+
+### v1.2.1 — 2026-10-08
+- Fixed pressure never updating after the first reading when displayed in atm — the change threshold was a fixed 0.1 in the displayed unit (about 100 hPa in atm, 3.4 hPa in inHg). It is now 1 hPa in every unit; kPa behaves as before
+- Fixed the temperature and humidity thresholds to match their descriptions: a change of *at least* the threshold is now reported (a change exactly equal to it was skipped)
+- Turning off **Enable Presence** no longer sets the sensor to `not present`, which looked like a departure to any rule watching it
+- Humidity readings outside 0–100% are now dropped with a log warning (they were dropped silently, and below 0% wasn't checked); a humidity offset can no longer push a reading past 0 or 100%
+- Debug logging turns itself off with a single setting update; removed a reference to an undefined constant
 
 ### v1.2.0 — 2026-04-18
 - Added configurable temperature and humidity reporting thresholds (`tempVariance`, `humidityVariance`)
@@ -124,3 +140,5 @@ HPM listing coming soon after initial testing.
 ## Attribution
 
 This driver is a community fork of the [Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor](https://github.com/markus-li/Hubitat/blob/release/drivers/expanded/zigbee-xiaomi-aqara-temperature-humidity-expanded.groovy) driver by [Markus Liljergren](https://oh-lalabs.com), licensed under the GNU General Public License v3. Original copyright retained per license terms. The upstream repository is archived and has not been updated since 2020.
+
+This fork is licensed under the same GNU GPL v3.0 or later — see [LICENSE](LICENSE). It is the only GPL driver in this repo; the others are Apache-2.0.

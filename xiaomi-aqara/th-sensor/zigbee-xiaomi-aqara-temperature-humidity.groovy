@@ -1,7 +1,9 @@
 /**
  *  Copyright 2020 Markus Liljergren (https://oh-lalabs.com)
+ *  Copyright 2026 Brent Rossow (modifications)
+ *  SPDX-License-Identifier: GPL-3.0-or-later
  *
- *  Version: v1.2.0
+ *  Version: v1.2.1
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -311,7 +313,7 @@ void pollDevice() {
 /* ===== DRIVER METADATA ===== */
 
 private String getDriverVersion() {
-    String version = "v1.2.0"
+    String version = "v1.2.1"
     logging("getDriverVersion() = ${version}", 100)
     sendEvent(name: "driver", value: version)
     updateDataValue('driver', version)
@@ -650,7 +652,7 @@ String integerToHexString(Integer value, Integer minBytes, boolean reverse=false
 Integer maxEventMinutes(BigDecimal forcedMinutes=null) {
     Integer mbe = null
     if(forcedMinutes == null && (state.forcedMinutes == null || state.forcedMinutes == 0)) {
-        mbe = MINUTES_BETWEEN_EVENTS == null ? 90 : MINUTES_BETWEEN_EVENTS
+        mbe = 90
     } else {
         mbe = forcedMinutes != null ? forcedMinutes.intValue() : state.forcedMinutes.intValue()
     }
@@ -779,14 +781,7 @@ void scheduleLogsOff(boolean noLogWarning=false) {
 
 void logsOff() {
     log.warn "Debug logging disabled..."
-    device.clearSetting("logLevel")
-    device.removeSetting("logLevel")
-    device.updateSetting("logLevel", "0")
-    state?.settings?.remove("logLevel")
-    device.clearSetting("debugLogging")
-    device.removeSetting("debugLogging")
-    device.updateSetting("debugLogging", "false")
-    state?.settings?.remove("debugLogging")
+    device.updateSetting("debugLogging", [value: "false", type: "bool"])
 }
 
 boolean isValidDate(String dateFormat, String dateString) {
@@ -915,7 +910,9 @@ void configurePresence() {
         schedule("${rnd.nextInt(59)} ${rnd.nextInt(59)} 1/3 * * ? *", 'checkPresence')
         checkPresence(false)
     } else {
-        sendEvent(name: "presence", value: "not present", descriptionText: "Presence Checking Disabled")
+        // Not "not present": the device is a PresenceSensor, so that would look like a
+        // departure to any rule watching it
+        sendEvent(name: "presence", value: "present", descriptionText: "Presence checking disabled")
         unschedule('checkPresence')
     }
 }
@@ -941,7 +938,7 @@ void sendTemperatureEvent(Integer rawValue, BigDecimal variance = null, Integer 
             tChange = tChange.setScale(1, BigDecimal.ROUND_HALF_UP)
             logging("Temperature: $t $tempUnit (old temp: $oldT, change: $tChange)", 1)
         }
-        if(oldT == null || tChange > variance) {
+        if(oldT == null || tChange >= variance) {
             logging("Sending temperature event (Temperature: $t $tempUnit, old temp: $oldT, change: $tChange)", 100)
             sendEvent(name:"temperature", value: t, unit: "$tempUnit", isStateChange: true)
             if(reportAbsoluteHumidity == true) {
@@ -957,7 +954,9 @@ void sendTemperatureEvent(Integer rawValue, BigDecimal variance = null, Integer 
 
 void sendPressureEvent(Map msgMap) {
     def rawValue = msgMap['valueParsed']
-    BigDecimal variance = 0.1
+    // Report a change of 1 hPa, whatever the displayed unit. A fixed 0.1 in the displayed
+    // unit meant about 100 hPa in atm (pressure never updated) and 3.4 hPa in inHg.
+    BigDecimal variance = pressureVariance()
     if(msgMap["attrId"] == "0020") {
         rawValue = rawValue / 1000.0
     }
@@ -967,18 +966,18 @@ void sendPressureEvent(Map msgMap) {
         return
     }
     BigDecimal p = convertPressure(rawValue as BigDecimal)
-    BigDecimal oldP = device.currentValue('pressure') == null ? null : device.currentValue('pressure')
-    if(oldP != null) oldP = oldP.setScale(2, BigDecimal.ROUND_HALF_UP)
+    // Both values are already at the displayed resolution. Rounding them again to two
+    // decimals erased every change in atm, so they are compared as they are.
+    BigDecimal oldP = device.currentValue('pressure')
     BigDecimal pChange = null
     if(oldP == null) {
         logging("Pressure: $p", 1)
     } else {
-        pChange = Math.abs(p - oldP)
-        pChange = pChange.setScale(2, BigDecimal.ROUND_HALF_UP)
+        pChange = (p - oldP).abs()
         logging("Pressure: $p (old pressure: $oldP, change: $pChange)", 1)
     }
     String pUnit = pressureUnitConversion == null ? "kPa" : pressureUnitConversion
-    if(oldP == null || pChange > variance) {
+    if(oldP == null || pChange >= variance) {
         logging("Sending pressure event (Pressure: $p, old pressure: $oldP, change: $pChange)", 100)
         sendEvent(name:"pressure", value: p, unit: "$pUnit", isStateChange: true)
     } else {
@@ -989,27 +988,32 @@ void sendPressureEvent(Map msgMap) {
 void sendHumidityEvent(Integer rawValue, BigDecimal variance = null) {
     if(variance == null) variance = humidityVariance != null ? humidityVariance.toBigDecimal() : 0.5
 
-    BigDecimal h = getAdjustedHumidity(rawValue / 100.0)
+    BigDecimal hRaw = rawValue / 100.0
+    if(hRaw < 0 || hRaw > 100) {
+        log.warn "Incorrect humidity received from the sensor ($hRaw%), it is probably time to change batteries!"
+        return
+    }
+    BigDecimal h = getAdjustedHumidity(hRaw)
+    // An offset can push a valid reading past the ends of the scale
+    h = h > 100 ? 100 : (h < 0 ? 0 : h)
     BigDecimal oldH = device.currentValue('humidity')
     if(oldH != null) oldH = oldH.setScale(2, BigDecimal.ROUND_HALF_UP)
     BigDecimal hChange = null
-    if(h <= 100) {
-        if(oldH == null) {
-            logging("Humidity: $h %", 1)
-        } else {
-            hChange = Math.abs(h - oldH)
-            hChange = hChange.setScale(2, BigDecimal.ROUND_HALF_UP)
-            logging("Humidity: $h% (old humidity: $oldH%, change: $hChange%)", 1)
+    if(oldH == null) {
+        logging("Humidity: $h %", 1)
+    } else {
+        hChange = Math.abs(h - oldH)
+        hChange = hChange.setScale(2, BigDecimal.ROUND_HALF_UP)
+        logging("Humidity: $h% (old humidity: $oldH%, change: $hChange%)", 1)
+    }
+    if(oldH == null || hChange >= variance) {
+        logging("Sending humidity event (Humidity: $h%, old humidity: $oldH%, change: $hChange%)", 100)
+        sendEvent(name:"humidity", value: h, unit: "%", isStateChange: true)
+        if(reportAbsoluteHumidity == true) {
+            sendAbsoluteHumidityEvent(tempInCelsius(), h)
         }
-        if(oldH == null || hChange > variance) {
-            logging("Sending humidity event (Humidity: $h%, old humidity: $oldH%, change: $hChange%)", 100)
-            sendEvent(name:"humidity", value: h, unit: "%", isStateChange: true)
-            if(reportAbsoluteHumidity == true) {
-                sendAbsoluteHumidityEvent(tempInCelsius(), h)
-            }
-        } else {
-            logging("SKIPPING humidity event since the change wasn't large enough (Humidity: $h%, old humidity: $oldH%, change: $hChange%)", 1)
-        }
+    } else {
+        logging("SKIPPING humidity event since the change wasn't large enough (Humidity: $h%, old humidity: $oldH%, change: $hChange%)", 1)
     }
 }
 
@@ -1135,6 +1139,18 @@ private BigDecimal getAdjustedPressure(BigDecimal value, Integer decimals=2) {
         return (value + new BigDecimal(pressureOffset)).setScale(res, BigDecimal.ROUND_HALF_UP)
     } else {
         return value.setScale(res, BigDecimal.ROUND_HALF_UP)
+    }
+}
+
+// 1 hPa in the displayed pressure unit, rounded down to the displayed resolution so
+// that a 1 hPa change still qualifies after both readings have been rounded
+private BigDecimal pressureVariance() {
+    switch(pressureUnitConversion) {
+        case "inHg": return 0.02      // 1 hPa = 0.0295 inHg
+        case "mmHg": return 0.74      // 1 hPa = 0.750 mmHg
+        case "atm":  return 0.00098   // 1 hPa = 0.000987 atm
+        case "mbar": return 1.0
+        default:     return 0.1   // kPa
     }
 }
 

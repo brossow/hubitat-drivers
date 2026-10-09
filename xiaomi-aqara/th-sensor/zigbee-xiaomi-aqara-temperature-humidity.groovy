@@ -1,5 +1,7 @@
 /**
  *  Copyright 2020 Markus Liljergren (https://oh-lalabs.com)
+ *  Copyright 2026 Brent Rossow (modifications)
+ *  SPDX-License-Identifier: GPL-3.0-or-later
  *
  *  Version: v1.2.0
  *

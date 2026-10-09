@@ -22,6 +22,10 @@ Device drivers for [Hubitat Elevation](https://hubitat.com) by [Brent Rossow](ht
 
 Each driver has its own README with an import URL for manual installation via **Drivers Code → New Driver → Import**, as well as a Hubitat Package Manager (HPM) listing.
 
+## License
+
+Everything in this repo is licensed under the [Apache License 2.0](LICENSE), **except** the [Xiaomi/Aqara Temperature & Humidity](xiaomi-aqara/th-sensor/) driver. That driver is a fork of Markus Liljergren's GPL-licensed original, so it stays under the [GNU GPL v3.0 or later](xiaomi-aqara/th-sensor/LICENSE). Each driver folder has its own `LICENSE` file.
+
 ## Releases
 
 Tags follow the format `{driver}/v{version}` — for example, `birdweather/v1.2.0`. Each tag triggers a GitHub Release with the notes from that driver's `packageManifest.json`.

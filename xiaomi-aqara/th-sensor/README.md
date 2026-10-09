@@ -124,3 +124,5 @@ HPM listing coming soon after initial testing.
 ## Attribution
 
 This driver is a community fork of the [Zigbee - Xiaomi/Aqara Temperature & Humidity Sensor](https://github.com/markus-li/Hubitat/blob/release/drivers/expanded/zigbee-xiaomi-aqara-temperature-humidity-expanded.groovy) driver by [Markus Liljergren](https://oh-lalabs.com), licensed under the GNU General Public License v3. Original copyright retained per license terms. The upstream repository is archived and has not been updated since 2020.
+
+This fork is licensed under the same GNU GPL v3.0 or later — see [LICENSE](LICENSE). It is the only GPL driver in this repo; the others are Apache-2.0.

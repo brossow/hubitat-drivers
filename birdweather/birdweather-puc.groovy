@@ -1,6 +1,9 @@
 /**
  * BirdWeather PUC — Hubitat Driver
  *
+ * Copyright 2026 Brent Rossow
+ * SPDX-License-Identifier: Apache-2.0
+ *
  * Polls the BirdWeather API for live bird detections from your PUC station
  * and exposes them as Hubitat attributes and events for use in automations.
  *

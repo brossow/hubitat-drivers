@@ -7,6 +7,7 @@
   "releaseNotes": "Fixes false newLifetimeSpeciesDetected alerts for species you have already seen. The BirdWeather species endpoint silently caps results at 100 and returns them most-detected first, so the driver only ever tracked your 100 commonest birds and re-alerted on everything rarer. The all-time list is now read page by page, merged rather than overwritten, never cleared by an empty or failed response, and refreshed hourly instead of every poll.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/birdweather",
   "communityLink": "https://community.hubitat.com/t/release-birdweather-puc-driver/163303",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/birdweather/LICENSE",
   "apps": [],
   "drivers": [
     {

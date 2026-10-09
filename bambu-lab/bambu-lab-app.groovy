@@ -72,7 +72,7 @@ def mainPage() {
 
     dynamicPage(name: "mainPage", title: "Bambu Lab Printer", install: true, uninstall: true) {
         section("Printer Device") {
-            input name: "printerDevice", type: "capability.sensor",
+            input name: "printerDevice", type: "device.BambuLabPrinter",
                   title: "Bambu Lab Printer device", required: true,
                   description: "Select the device created with the Bambu Lab Printer driver"
         }
@@ -579,7 +579,7 @@ private Integer _parseRemain(String remain) {
     if (!remain || remain == "?") return null
     try {
         int n = remain.replace("%", "").trim().toInteger()
-        return n > 0 ? n : null
+        return n >= 0 ? n : null   // 0% is an empty spool, not unknown
     } catch (ignored) { return null }
 }
 

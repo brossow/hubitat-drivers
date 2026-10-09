@@ -4,7 +4,16 @@ By [Brent Rossow](https://github.com/brossow). A maintained fork of [Sebastian Y
 
 The Aeotec Heavy Duty Smart Switch (ZW078) is a Z-Wave inline switch rated for up to 40A / 10,000W — designed for high-current loads like electric vehicle chargers, electric dryers, water heaters, and HVAC equipment. It reports power (W), energy (kWh), voltage (V), current (A), and internal board temperature.
 
-## What's Fixed in v1.2.0
+## What's Fixed in v1.2.1
+
+- **Save Preferences didn't reach the switch** — Hubitat ignores what `updated()` returns, so changed settings were only sent if you also pressed **Configure**. Saving preferences now sends them.
+- **Configure on a new device could fail** — preferences have no values until they're saved once, so pressing **Configure** first crashed on the empty settings. It now uses the defaults.
+- **Hail notifications threw an error** — the v1.2.0 Hail fix called a method that its own parameter name hid. With "Load change notifications" set to **Send HAIL**, the switch state now refreshes as intended.
+- **Energy reading jumped around** — the driver requested both kWh and kVAh and wrote both into `energy`. Only kWh is requested and stored now.
+- **Could claim other devices at pairing** — two generic fingerprints matched almost any metering switch; they're removed.
+- **Firmware version ambiguity** — firmware was stored as a decimal, so 1.05 and 1.50 looked alike; it's now stored as text (`1.05`).
+
+## What Was Fixed in v1.2.0
 
 The original driver worked but had several bugs that have been corrected:
 
@@ -33,7 +42,7 @@ The original driver worked but had several bugs that have been corrected:
    ```
 3. Click **Import → Save**
 4. Open your Aeotec Heavy Duty Smart Switch device and change the **Type** to **Aeotec Heavy Duty Smart Switch** (namespace: brossow)
-5. Click **Save Device**, then **Configure**, then **Save Preferences**
+5. Click **Save Device**, then **Save Preferences** (this sends your settings to the switch)
 
 > **Migrating from the original syepes driver?** You'll need to reassign the driver type on the device page (the namespace changed from `syepes` to `brossow`). All settings and history are preserved.
 
@@ -69,11 +78,21 @@ The original driver worked but had several bugs that have been corrected:
 - **on() / off()** — Control the switch
 - **refresh()** — Request current state and all meter readings from the device
 - **poll()** — Request meter readings only
-- **configure()** — Push all preference settings to the device
+- **configure()** — Push all preference settings to the device (Save Preferences does this too)
 - **reset()** — Zero out all accumulated energy/power readings and re-poll
 - **clearState()** — Clear all driver state and device data (use if switching driver versions)
 
 ## Changelog
+
+### v1.2.1
+- Fixed Hail handler: its `cmd` parameter shadowed the `cmd()` method, so it threw instead of refreshing state
+- `updated()` now sends the configuration with `sendHubCommand` (Hubitat discards `updated()`'s return value)
+- `configure()` falls back to preference defaults when preferences have never been saved
+- Stopped requesting kVAh and no longer writes kVAh reports into the `energy` (kWh) attribute
+- Removed the generic `inClusters: "0x25,0x32"` and `deviceId: "78"` fingerprints
+- Command encapsulation now uses `zwaveSecureEncap()` for every inclusion type; removed the unused MultiChannel handler and the SmartThings-style security bookkeeping
+- Firmware and protocol versions stored as padded strings
+- `reset()` sends numeric zeros; `configure()` clears old schedules itself, so turning State Check off takes effect from the Configure button too
 
 ### v1.2.0 — 2026-04-18
 - Fixed undefined variable `firmwareVersion` in versionv1 VersionReport handler (firmware0 branch)
@@ -90,4 +109,4 @@ The original driver worked but had several bugs that have been corrected:
 
 ## Attribution
 
-This driver is a fork of [Aeotec Heavy Duty Smart Switch](https://github.com/syepes/Hubitat/tree/master/Drivers/Aeotec) by [Sebastian YEPES](https://github.com/syepes), licensed under the Apache License 2.0. Original copyright retained per license terms.
+This driver is a fork of [Aeotec Heavy Duty Smart Switch](https://github.com/syepes/Hubitat/tree/master/Drivers/Aeotec) by [Sebastian YEPES](https://github.com/syepes), licensed under the Apache License 2.0. This fork is also Apache-2.0 — see [LICENSE](LICENSE). Original copyright retained per license terms.

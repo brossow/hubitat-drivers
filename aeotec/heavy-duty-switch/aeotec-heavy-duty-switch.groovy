@@ -13,23 +13,8 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  *  Forked from https://github.com/syepes/Hubitat/tree/master/Drivers/Aeotec (v1.1.6)
- *  Changes in v1.2.0:
- *    - Fixed undefined variable in versionv1.VersionReport handler (firmware0 branch)
- *    - Fixed stateCheckInterval hour options (value 2 was labeled "1h" but scheduled every 2h; added true 1h option)
- *    - Fixed SwitchBinaryReport handler (was silently dropped; now updates switch state)
- *    - Fixed Hail handler (was silently dropped; now triggers a state refresh when param80=1)
- *    - Changed param80 default to 2 (Basic Report) so the hub receives immediate state change notifications
- *    - Removed powerlevelGet() from poll() and checkState() (Z-Wave signal level is not device state)
- *    - Changed on()/off() to use SwitchBinary commands (more correct than Basic for switch control)
- *    - Removed deprecated displayed: true parameter from sendEvent() calls in reset()
- *  Changes in v1.2.1:
- *    - Fixed Hail handler (parameter shadowed cmd(), so it threw instead of refreshing state)
- *    - Save Preferences now sends the configuration to the device (updated() return values are ignored by Hubitat)
- *    - configure() falls back to preference defaults when preferences have never been saved
- *    - Stopped writing kVAh readings into the energy (kWh) attribute
- *    - Removed generic fingerprints that could claim other metering switches at pairing
- *    - Simplified command encapsulation to zwaveSecureEncap(); removed dead MultiChannel handler
- *    - Firmware version stored as a padded string (1.05 vs 1.50 were indistinguishable)
+ *  Modified by Brent Rossow: https://github.com/brossow/hubitat-drivers/tree/main/aeotec/heavy-duty-switch
+ *  Changes are listed in the README changelog.
  */
 
 import groovy.transform.Field

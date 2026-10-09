@@ -109,7 +109,6 @@ Configure which events trigger push notifications. Notifications are sent to any
 | Print paused | Off |
 | Printer error | On |
 | Filament type changed | Off |
-| Progress milestones (25 / 50 / 75 / 90 %) | Off |
 
 ### Automations
 
@@ -118,6 +117,7 @@ Control switches and dimmers based on printer events. An optional **hub mode res
 | Event | Actions available |
 |---|---|
 | Print starts | Turn switches ON / OFF |
+| Print pauses | Turn switches ON / OFF |
 | Print finishes | Turn switches ON / OFF; set dimmers to a level |
 | Printer error | Turn switches ON |
 
@@ -154,7 +154,7 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 | `printerState` | string | `IDLE` · `PREPARE` · `RUNNING` · `PAUSE` · `FINISH` · `FAILED` |
 | `printFile` | string | Current print job filename |
 | `printProgress` | number | Progress 0–100% |
-| `printElapsed` | string | Elapsed print time (H:MM:SS, tracked locally) |
+| `printElapsed` | string | Elapsed print time (H:MM, tracked locally, updated every minute). A finished or failed print keeps its time until the next print starts |
 | `remainingTime` | number | Estimated minutes remaining |
 | `currentLayer` | number | Current layer number |
 | `totalLayers` | number | Total layer count |
@@ -189,8 +189,8 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 - Turn on **Debug Logging** in device preferences and review the Hubitat live log for the specific error message
 
 **Driver connects but status never updates / attributes stay stale**
-- Newer Bambu firmware may send only delta payloads rather than full state; the driver compensates by requesting a full push on the refresh schedule
-- If attributes are slow to populate, lower the **Status Refresh Interval** to 60 seconds in device preferences
+- P1 and A1 printers send only what changed in each message; the driver merges these updates and also asks for a full status report every **Status Refresh Interval**. The minimum is 300 seconds, because frequent full reports can make P1-series printers lag
+- If a field is still blank a few minutes after connecting, click **Refresh** on the device to request a full report now
 - The driver watches for prolonged silence from the printer and triggers an automatic full reconnect when it detects a stale connection
 
 **Dashboard tiles are blank when viewing remotely**
@@ -229,6 +229,17 @@ If this integration saves you some time or makes your workflow better, a small d
 
 ---
 
+## Tests
+
+```sh
+tests/run.sh               # everything
+tests/run.sh ams           # only tests whose name contains "ams"
+```
+
+The off-hub tests load the driver into a small stand-in for the Hubitat sandbox, feed it printer messages (full X1C-style reports and P1-style partial ones) with a clock the tests control, and check the events it sends. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
+
+---
+
 ## License
 
-MIT
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

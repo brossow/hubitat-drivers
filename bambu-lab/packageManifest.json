@@ -3,7 +3,7 @@
   "minimumHEVersion": "2.2.8",
   "author": "Brent Rossow",
   "version": "1.0.0",
-  "dateReleased": "2026-05-01",
+  "dateReleased": "2026-10-09",
   "releaseNotes": "Initial release. Live dashboard tiles with print progress, temperatures, filament state, and full AMS contents — all updated in real time from the printer's local MQTT broker. Includes push notifications and switch/dimmer automations.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/bambu-lab",
   "communityLink": "",

@@ -11,6 +11,14 @@
       "tags": ["Z-Wave", "Energy Monitoring", "Switch"]
     },
     {
+      "id": "252f8a99-90b9-4caf-a704-6a443ec87189",
+      "name": "Bambu Lab Printer",
+      "category": "Integrations",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/bambu-lab/packageManifest.json",
+      "description": "Live status, AMS filament and dashboard tiles for Bambu Lab 3D printers, straight from the printer's local MQTT broker with nothing else to run.",
+      "tags": ["LAN", "Monitoring", "Notifications"]
+    },
+    {
       "id": "16ea4e31-70a2-4ba1-a7cf-498ded5a69f8",
       "name": "BirdWeather PUC",
       "category": "Integrations",

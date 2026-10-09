@@ -20,12 +20,16 @@ import groovy.json.JsonOutput
 @Field static final int    TRAY_EXTERNAL = 254   // tray_now: printing from the external spool
 @Field static final int    TRAY_NONE     = 255   // tray_now: nothing loaded
 @Field static final long   LAST_UPDATE_EVERY_MS = 60000L
+@Field static final long   WIFI_SIGNAL_EVERY_MS = 300000L
 
 // Per-message bookkeeping kept in memory, not state: printers report about once a
-// second while printing, and every state write is a database write. Lost on a hub
-// reboot or code save, which only means one extra lastUpdate event.
+// second, idle or printing, and every state write is a database write. Lost on a hub
+// reboot or code save, which only means the next message sends its values once more.
 @Field static final java.util.concurrent.ConcurrentHashMap<Long, Long> lastMessageAt  = new java.util.concurrent.ConcurrentHashMap()
 @Field static final java.util.concurrent.ConcurrentHashMap<Long, Long> lastUpdateSent = new java.util.concurrent.ConcurrentHashMap()
+@Field static final java.util.concurrent.ConcurrentHashMap<Long, Long> wifiSignalSent = new java.util.concurrent.ConcurrentHashMap()
+// The last value sent for each attribute, so a report that repeats it sends nothing
+@Field static final java.util.concurrent.ConcurrentHashMap<Long, Map>  lastSent       = new java.util.concurrent.ConcurrentHashMap()
 
 metadata {
     definition(
@@ -305,7 +309,8 @@ def parse(String raw) {
 }
 
 private void _processPayload(Map json) {
-    def p = json.print
+    def  p     = json.print
+    long nowMs = now()
 
     // ── State + elapsed tracking ───────────────────────────────
     // printElapsed is settled before printerState changes, because whatever reacts to
@@ -325,60 +330,59 @@ private void _processPayload(Map json) {
                 state.printStartTime = null
             }
         } else if (gs in ["IDLE", "PREPARE"]) {
-            state.printStartTime = null
-            sendEvent(name: "printElapsed", value: "—")
+            if (state.printStartTime) state.printStartTime = null
+            _send("printElapsed", "—")
         }
-        stateChanged = device.currentValue("printerState") != gs
-        sendEvent(name: "printerState", value: gs)
+        stateChanged = _send("printerState", gs)
     }
 
     // ── Progress ───────────────────────────────────────────────
     if (p.containsKey("mc_percent"))
-        sendEvent(name: "printProgress",  value: (p.mc_percent        as int), unit: "%")
+        _send("printProgress",  (p.mc_percent        as int), "%")
     if (p.containsKey("mc_remaining_time"))
-        sendEvent(name: "remainingTime",  value: (p.mc_remaining_time as int), unit: "min")
+        _send("remainingTime",  (p.mc_remaining_time as int), "min")
     if (p.containsKey("layer_num"))
-        sendEvent(name: "currentLayer",   value: (p.layer_num         as int))
+        _send("currentLayer",   (p.layer_num         as int))
     if (p.containsKey("total_layer_num"))
-        sendEvent(name: "totalLayers",    value: (p.total_layer_num   as int))
+        _send("totalLayers",    (p.total_layer_num   as int))
 
     // ── File ───────────────────────────────────────────────────
     if (p.containsKey("subtask_name") || p.containsKey("gcode_file")) {
         String f = ((p.subtask_name ?: p.gcode_file) ?: "") as String
-        sendEvent(name: "printFile", value: f.tokenize("/").last() ?: "")
+        _send("printFile", f.tokenize("/").last() ?: "")
     }
 
     // ── Temperatures ───────────────────────────────────────────
     if (p.containsKey("nozzle_temper"))
-        sendEvent(name: "nozzleTemp",       value: Math.round(p.nozzle_temper        as double), unit: "°C")
+        _send("nozzleTemp",       Math.round(p.nozzle_temper        as double), "°C")
     if (p.containsKey("nozzle_target_temper"))
-        sendEvent(name: "nozzleTargetTemp", value: Math.round(p.nozzle_target_temper as double), unit: "°C")
+        _send("nozzleTargetTemp", Math.round(p.nozzle_target_temper as double), "°C")
     if (p.containsKey("bed_temper"))
-        sendEvent(name: "bedTemp",          value: Math.round(p.bed_temper           as double), unit: "°C")
+        _send("bedTemp",          Math.round(p.bed_temper           as double), "°C")
     if (p.containsKey("bed_target_temper"))
-        sendEvent(name: "bedTargetTemp",    value: Math.round(p.bed_target_temper    as double), unit: "°C")
+        _send("bedTargetTemp",    Math.round(p.bed_target_temper    as double), "°C")
 
     // Chamber temp: newer firmware packs current+target into device.ctc.info.temp
     // (low 16 bits = current °C). Older firmware reports flat chamber_temper in print.
     def devBlock  = json.device ?: p.device
     def ctcPacked = devBlock?.ctc?.info?.temp
     if (ctcPacked != null) {
-        sendEvent(name: "chamberTemp", value: (ctcPacked & 0xFFFF), unit: "°C")
+        _send("chamberTemp", (ctcPacked & 0xFFFF), "°C")
     } else if (p.containsKey("chamber_temper")) {
-        sendEvent(name: "chamberTemp", value: Math.round(p.chamber_temper as double), unit: "°C")
+        _send("chamberTemp", Math.round(p.chamber_temper as double), "°C")
     }
 
     // ── Speed ──────────────────────────────────────────────────
     if (p.containsKey("spd_lvl"))
-        sendEvent(name: "speedLevel",     value: SPEED_LABELS[(p.spd_lvl as int)] ?: "Standard")
+        _send("speedLevel",     SPEED_LABELS[(p.spd_lvl as int)] ?: "Standard")
     if (p.containsKey("spd_mag"))
-        sendEvent(name: "speedMagnitude", value: (p.spd_mag as int), unit: "%")
+        _send("speedMagnitude", (p.spd_mag as int), "%")
 
     // ── Chamber light ──────────────────────────────────────────
     if (p.containsKey("lights_report")) {
         p.lights_report?.each { light ->
             if (light?.node == "chamber_light")
-                sendEvent(name: "chamberLight", value: light.mode == "on" ? "on" : "off")
+                _send("chamberLight", light.mode == "on" ? "on" : "off")
         }
     }
 
@@ -389,15 +393,21 @@ private void _processPayload(Map json) {
 
     // ── Misc ───────────────────────────────────────────────────
     if (p.containsKey("mc_print_error_code"))
-        sendEvent(name: "printError", value: (p.mc_print_error_code as String))
-    if (p.containsKey("wifi_signal"))
-        sendEvent(name: "wifiSignal", value: (p.wifi_signal          as String))
+        _send("printError", (p.mc_print_error_code as String))
     if (p.ipcam?.rtsp_url)
-        sendEvent(name: "cameraUrl",  value: (p.ipcam.rtsp_url       as String))
+        _send("cameraUrl",  (p.ipcam.rtsp_url       as String))
+
+    // The signal strength moves a dBm or two from one report to the next, so sending
+    // every change would add an event most seconds. At most every 5 minutes.
+    if (p.containsKey("wifi_signal")) {
+        Long wifiAt = wifiSignalSent[device.idAsLong]
+        if (wifiAt == null || nowMs - wifiAt >= WIFI_SIGNAL_EVERY_MS) {
+            if (_send("wifiSignal", (p.wifi_signal as String))) wifiSignalSent[device.idAsLong] = nowMs
+        }
+    }
 
     // Stamped to the second, so sending it with every message would add an event per
     // message (about one a second while printing). Once a minute, or on a state change.
-    long nowMs = now()
     Long sentAt = lastUpdateSent[device.idAsLong]
     if (stateChanged || sentAt == null || nowMs - sentAt >= LAST_UPDATE_EVERY_MS) {
         lastUpdateSent[device.idAsLong] = nowMs
@@ -413,8 +423,9 @@ private void _processAms(def amsBlock) {
     if (!(amsBlock instanceof Map)) return
 
     if (amsBlock.containsKey("tray_now")) {
-        state.trayNow = _parseTrayNow(amsBlock.tray_now)
-        sendEvent(name: "amsTrayNow", value: state.trayNow)
+        int trayNow = _parseTrayNow(amsBlock.tray_now)
+        if (state.trayNow != trayNow) state.trayNow = trayNow
+        _send("amsTrayNow", trayNow)
     }
 
     def units = amsBlock.ams
@@ -449,7 +460,7 @@ private void _processAms(def amsBlock) {
     }
 
     if (cache != old) state.amsCache = cache
-    sendEvent(name: "amsSummary", value: _amsSummary(cache))
+    _send("amsSummary", _amsSummary(cache))
 }
 
 private String _amsSummary(Map cache) {
@@ -487,8 +498,8 @@ private void _updateActiveFilament() {
         tray = state.amsCache?.get(trayNow.intdiv(4).toString())?.get((trayNow % 4).toString())
     }
     if (tray?.tray_type) {
-        sendEvent(name: "filamentType",  value: tray.tray_type as String)
-        sendEvent(name: "filamentColor", value: _hexColor(tray.tray_color as String))
+        _send("filamentType",  tray.tray_type as String)
+        _send("filamentColor", _hexColor(tray.tray_color as String))
     }
 }
 
@@ -525,10 +536,11 @@ private void _publish(Map payload) {
 def _refreshElapsed() {
     if (!state.printStartTime) return
     long mins = (now() - (state.printStartTime as long)).intdiv(60000L)
-    sendEvent(name: "printElapsed", value: String.format("%d:%02d", mins.intdiv(60L), mins % 60L))
+    _send("printElapsed", String.format("%d:%02d", mins.intdiv(60L), mins % 60L))
 }
 
 private void _initAttributes() {
+    lastSent.remove(device.idAsLong)   // the values below bypass _send
     sendEvent(name: "driverVersion",    value: VERSION)
     sendEvent(name: "connectionStatus", value: "disconnected")
     sendEvent(name: "printerState",     value: "IDLE")
@@ -554,6 +566,26 @@ private void _initAttributes() {
     sendEvent(name: "cameraUrl",        value: "")
     sendEvent(name: "lastUpdate",       value: "")
     sendEvent(name: "printFile",        value: "")
+}
+
+// Sends the event unless it repeats the last value sent for that attribute. The
+// printer repeats its whole status about once a second, idle or printing, and the hub
+// does work for every sendEvent even when it then drops an unchanged value. Returns
+// whether the event was sent. Every attribute set from printer messages goes through
+// here (_initAttributes excepted, which clears the record), so the record stays true.
+private boolean _send(String name, def value, String unit = null) {
+    Long id   = device.idAsLong
+    Map  sent = lastSent[id]
+    if (sent == null) {
+        lastSent.putIfAbsent(id, new java.util.concurrent.ConcurrentHashMap())
+        sent = lastSent[id]
+    }
+    if (value != null && sent[name] == value) return false
+    Map evt = [name: name, value: value]
+    if (unit) evt.unit = unit
+    sendEvent(evt)
+    if (value != null) sent[name] = value
+    return true
 }
 
 private int _parseTrayNow(def val) {

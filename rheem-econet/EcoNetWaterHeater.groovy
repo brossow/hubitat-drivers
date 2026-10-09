@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.1.2
+ * Version: 0.3.3
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -56,8 +56,12 @@ metadata {
     preferences {
         input name: "email",        type: "text",     title: "EcoNet Email",     required: true
         input name: "password",     type: "password", title: "EcoNet Password",  required: true
-        input name: "deviceIndex",  type: "number",   title: "Water heater index (0 = first, 1 = second, …)",
-              defaultValue: 0, required: true
+        // Not "required" on purpose: on a new install there is no way to know a serial
+        // until the driver has connected once, so requiring it would block the first save.
+        // The driver fills it in itself — see adoptSelection().
+        input name: "deviceSerial", type: "text",
+              title: "Water heater serial number — leave blank to fill in automatically (see README for multiple water heaters)",
+              required: false
         input name: "tempUnit",     type: "enum",     title: "Temperature unit",
               options: ["F", "C"], defaultValue: "F", required: true
         input name: "pollInterval", type: "enum",     title: "Poll interval",
@@ -70,9 +74,11 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-@Field String REST_BASE     = "https://rheem.clearblade.com/api/v/1"
+@Field String REST_BASE     = "https://rheem.rheemconnect.com/api/v/1"
 @Field String SYSTEM_KEY    = "e2e699cb0bb0bbb88fc8858cb5a401"
 @Field String SYSTEM_SECRET = "E2E699CB0BE6C6FADDB1B0BC9A20"
+@Field Integer LOGIN_RETRY_MIN = 120    // seconds; doubles with each failed login…
+@Field Integer LOGIN_RETRY_MAX = 3600   // …up to this cap
 
 // Cleaned @MODE enumText string (uppercase, no spaces/underscores/slashes) → display name
 // null means "resolve dynamically based on device type" (ELECTRICGAS case)
@@ -103,6 +109,10 @@ metadata {
     "vacation"     : "VACATION",
 ]
 
+// Modes in which the heater is not keeping water hot. Off for the Switch capability as
+// well as for thermostatMode, so the two never disagree; on() restores the last other mode.
+@Field List INACTIVE_MODES = ["off", "vacation"]
+
 // Water heater display name → Hubitat thermostat mode (for Rule Machine compatibility)
 @Field Map WH_MODE_TO_THERMOSTAT = [
     "off"          : "off",
@@ -132,19 +142,48 @@ def updated() {
 
 def initialize() {
     logDebug "Initializing"
+    // Start clean, but keep the mode on() restores: initialize also runs at every hub
+    // startup, and wiping it there meant on() forgot a mode the user had set.
+    def lastActiveMode = state.lastActiveMode
     state.clear()
+    if (lastActiveMode) state.lastActiveMode = lastActiveMode
+    // A freshly created device has no credentials yet, and nothing prompts the user
+    // for them — say where they go rather than sitting silent with no data.
+    if (!settings.email || !settings.password) {
+        log.warn "EcoNet WH: no credentials set. Open this device's Preferences tab, enter the EcoNet email and " +
+                 "password you use in the Rheem app, and click Save Preferences. There is no separate login prompt."
+        return
+    }
     schedulePoll()
     login()
 }
 
 def refresh() {
-    if (!state.userToken) { login() } else { fetchEquipment() }
+    if (state.userToken) {
+        fetchEquipment()
+        return
+    }
+    // A rule calling refresh() on a timer must not undo the backoff: with a rejected
+    // password that would retry it every minute against the account the Rheem app uses.
+    if (loginBackoffActive()) {
+        int wait = (((state.loginRetryAt as Long) - now()) / 1000) as int
+        log.info "EcoNet WH: not logged in — the next login attempt is in ${describeDelay(wait)}. " +
+                 "Save Preferences on this device to retry now."
+        return
+    }
+    login()
 }
 
 // Switch capability
 def on() {
     // Restore last known active mode; fall back to a type-appropriate default
     def mode = state.lastActiveMode as String
+    if (!mode && (state.supportsOnOff as Boolean)) {
+        // Nothing remembered: power on in whatever mode the unit is already set to,
+        // rather than guessing a mode it might not offer
+        if (publishCommand(["@ENABLED": 1])) sendEvent(name: "switch", value: "on")
+        return
+    }
     if (!mode) {
         def t = state.genericType as String
         mode = (t == "gasWaterHeater" || t == "tanklessWaterHeater") ? "gas" : "energy saving"
@@ -160,6 +199,10 @@ def off() {
 // Authentication  ——  POST /user/auth
 // ---------------------------------------------------------------------------
 def login() {
+    if (!settings.email || !settings.password) {
+        log.warn "EcoNet WH: no credentials set — enter your EcoNet email and password on this device's Preferences tab."
+        return
+    }
     logDebug "Authenticating as ${email}"
     def params = [
         uri        : "${REST_BASE}/user/auth",
@@ -175,28 +218,99 @@ def login() {
                 if (data?.options?.success) {
                     state.userToken = data.user_token
                     state.accountId = data.options.account_id
+                    state.loginAt   = now()
+                    clearLoginBackoff()
                     logDebug "Login OK — account ${state.accountId}"
                     fetchEquipment()
                 } else {
-                    log.error "EcoNet WH login failed: ${data?.options?.message}"
-                    // Bad credentials — no automatic retry
+                    loginRejected(data?.options?.message as String)
                 }
             } else {
-                log.error "EcoNet WH login HTTP ${resp.status} — retrying in 2 minutes"
-                runIn(120, "login")
+                int delay = scheduleLoginRetry(false)
+                log.error "EcoNet WH login HTTP ${resp.status} — retrying in ${describeDelay(delay)}"
             }
         }
     } catch (Exception e) {
-        log.error "EcoNet WH login exception: ${e.message} — retrying in 2 minutes"
-        runIn(120, "login")
+        def status = httpErrorStatus(e)
+        if (status == 401 || status == 403) {
+            loginRejected("HTTP ${status}")
+        } else {
+            int delay = scheduleLoginRetry(false)
+            log.error "EcoNet WH login exception: ${e.message} — retrying in ${describeDelay(delay)}"
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Login retry backoff
+//
+// A failed login schedules the next attempt with a doubling delay — 2, 4, 8 …
+// minutes, capped at an hour — and polls don't log in while one is pending.
+// Without this, an outage or a mistyped password meant a failed login on every
+// poll indefinitely. Rejected credentials go straight to the cap: repeating a bad
+// password risks locking the account the Rheem app also uses. Saving Preferences
+// re-initializes and clears all of it.
+// ---------------------------------------------------------------------------
+int scheduleLoginRetry(boolean rejected) {
+    int failures = ((state.loginFailures ?: 0) as Integer) + 1
+    state.loginFailures = failures
+    int delay = rejected ? LOGIN_RETRY_MAX
+                         : Math.min(LOGIN_RETRY_MIN * (1 << Math.min(failures - 1, 5)), LOGIN_RETRY_MAX)
+    state.loginRetryAt = now() + delay * 1000L
+    runIn(delay, "login")
+    return delay
+}
+
+void loginRejected(String reason) {
+    int delay = scheduleLoginRetry(true)
+    log.error "EcoNet WH login rejected (${reason ?: 'no reason given'}). Check the EcoNet email and password on this " +
+              "device's Preferences tab and click Save Preferences, which retries immediately. " +
+              "Otherwise the next attempt is in ${describeDelay(delay)}."
+}
+
+void clearLoginBackoff() {
+    state.remove("loginFailures")
+    state.remove("loginRetryAt")
+}
+
+boolean loginBackoffActive() {
+    return state.loginRetryAt && now() < (state.loginRetryAt as Long)
+}
+
+String describeDelay(int seconds) {
+    if (seconds >= 3600) return "1 hour"
+    int minutes = Math.max(1, Math.ceil(seconds / 60.0) as int)
+    return minutes == 1 ? "1 minute" : "${minutes} minutes"
+}
+
+// A 401 means the session token expired: log in again — unless we only just did, in
+// which case the new token is being refused too and retrying at once would loop.
+void handleUnauthorized(String context) {
+    state.userToken = null
+    if (state.loginAt && now() - (state.loginAt as Long) < 60000) {
+        int delay = scheduleLoginRetry(false)
+        log.error "EcoNet WH ${context}: new session refused — retrying login in ${describeDelay(delay)}"
+    } else {
+        log.warn "EcoNet WH ${context}: session expired — re-authenticating"
+        login()
+    }
+}
+
+// Hubitat's httpPost throws for non-2xx responses instead of calling the closure,
+// so the status code has to be read from the exception.
+Integer httpErrorStatus(Exception e) {
+    return (e instanceof groovyx.net.http.HttpResponseException) ? e.statusCode : null
 }
 
 // ---------------------------------------------------------------------------
 // Fetch equipment  ——  POST /code/{systemKey}/getUserDataForApp
 // ---------------------------------------------------------------------------
 def fetchEquipment() {
-    if (!state.userToken) { login(); return }
+    if (!state.userToken) {
+        // After a failed login a retry is already scheduled — don't add an attempt on every poll
+        if (!loginBackoffActive()) login()
+        return
+    }
 
     def params = [
         uri        : "${REST_BASE}/code/${SYSTEM_KEY}/getUserDataForApp",
@@ -215,15 +329,14 @@ def fetchEquipment() {
                     log.error "EcoNet WH getUserDataForApp returned success=false"
                 }
             } else if (resp.status == 401) {
-                log.warn "EcoNet WH token expired — re-authenticating"
-                state.userToken = null
-                login()
+                handleUnauthorized("poll")
             } else {
                 log.error "EcoNet WH getUserDataForApp HTTP ${resp.status}"
             }
         }
     } catch (Exception e) {
-        log.error "EcoNet WH fetchEquipment exception: ${e.message}"
+        if (httpErrorStatus(e) == 401) handleUnauthorized("poll")
+        else log.error "EcoNet WH fetchEquipment exception: ${e.message}"
     }
 }
 
@@ -232,12 +345,28 @@ def fetchEquipment() {
 // ---------------------------------------------------------------------------
 void parseLocations(List locations) {
     def waterHeaters = []
+    def places       = []   // parallel to waterHeaters: location name for each, may be null
+    def unavailable  = []   // units the API flags with an error
     locations.each { loc ->
+        def place = loc?.name ?: loc?.location_name
         loc?.equiptments?.each { equip ->   // NOTE: "equiptments" is a typo in the API
-            if (equip?.device_type == "WH" && !equip?.error) {
+            if (equip?.device_type != "WH") return
+            if (equip?.error) {
+                unavailable << equip
+            } else {
                 waterHeaters << equip
+                places       << place
             }
         }
+    }
+
+    // The pinned unit is on the account but reporting an error — usually offline. Say
+    // that, rather than "no water heater has this serial", and keep its identity: it is
+    // still the right unit, and it will be back.
+    def down = unavailable.find { selectionMatches(it) }
+    if (down) {
+        reportUnavailable(down)
+        return
     }
 
     if (waterHeaters.isEmpty()) {
@@ -245,14 +374,30 @@ void parseLocations(List locations) {
         return
     }
 
-    int idx = (settings.deviceIndex ?: 0) as int
-    if (idx >= waterHeaters.size()) {
-        log.warn "EcoNet WH: deviceIndex ${idx} out of range (${waterHeaters.size()} found) — using 0"
-        idx = 0
+    publishRoster(waterHeaters, places)
+
+    int idx = resolveIndex(waterHeaters)
+    if (idx < 0) {
+        // An explicit selection couldn't be honoured — never guess. Drop the cached
+        // identity too, so queued commands can't still reach the previous unit.
+        state.remove("deviceId")
+        state.remove("serialNumber")
+        return
     }
 
     def equip = waterHeaters[idx]
     logDebug "Water heater: ${equip["@NAME"]?.value}  id=${equip.device_name}  serial=${equip.serial_number}  type=${equip["@TYPE"]}"
+
+    if (!state.rosterLogged) {
+        state.rosterLogged = true
+        log.info "EcoNet WH: ${waterHeaters.size()} water heater(s) on this account — listed in the " +
+                 "waterHeater0…waterHeater${waterHeaters.size() - 1} state variables, under State Variables on the device's Commands tab."
+        if (waterHeaters.size() > 1) {
+            log.info "EcoNet WH: this Hubitat device controls ${state['waterHeater' + idx]}. Every other water " +
+                     "heater needs its own Hubitat device using this same driver, with that unit's serial number " +
+                     "set in its preferences."
+        }
+    }
 
     // Cache identity and device capabilities
     state.deviceId      = equip.device_name
@@ -264,7 +409,159 @@ void parseLocations(List locations) {
     state.setpointLow   = equip["@SETPOINT"]?.constraints?.lowerLimit
     state.setpointHigh  = equip["@SETPOINT"]?.constraints?.upperLimit
 
+    if (state.unavailableLogged) {
+        state.remove("unavailableLogged")
+        log.info "EcoNet WH: water heater ${unitId(equip)} is reporting normally again."
+    }
     updateAttributes(equip)
+}
+
+/** True when the serial preference picks out this unit, by the same rule resolveIndex() uses. */
+boolean selectionMatches(def equip) {
+    def wanted = normalizeSerial(settings.deviceSerial?.trim())
+    def id     = normalizeSerial(unitId(equip))
+    return wanted && id && (id == wanted || (id.length() >= 6 && wanted.contains(id)))
+}
+
+void reportUnavailable(def equip) {
+    sendEvent(name: "online", value: "false")
+    // Once per outage, not once per poll
+    if (!state.unavailableLogged) {
+        state.unavailableLogged = true
+        log.warn "EcoNet WH: water heater ${unitId(equip)} is reporting an error to EcoNet (${equip.error}) — " +
+                 "usually it is offline. Showing it as offline and skipping updates until it recovers."
+    }
+}
+
+/**
+ * Publish one state variable per discovered water heater — waterHeater0, waterHeater1, …
+ *
+ * One unit per variable is deliberate. Hubitat renders a list-valued state variable
+ * as a single row, so a combined list invites the user to copy every water heater at
+ * once; a row per unit makes "copy the one you want" unambiguous.
+ */
+void publishRoster(List found, List places) {
+    found.eachWithIndex { w, i ->
+        def name  = w["@NAME"]?.value ?: w.device_name ?: "unnamed"
+        def where = places[i] ? " @ ${places[i]}" : ""
+        state["waterHeater${i}".toString()] = "${name}${where} — ${unitId(w)}".toString()
+    }
+
+    // Drop rows left over from units no longer on the account
+    for (int i = found.size(); i < 64; i++) {
+        def key = "waterHeater${i}".toString()
+        if (state[key] == null) break
+        state.remove(key)
+    }
+}
+
+/**
+ * The identifier a device is pinned to: the unit's serial number, or its ClearBlade
+ * device id when it doesn't report one. Every entry has a device id, so this always
+ * yields something stable to pin to.
+ */
+String unitId(def equip) {
+    return (equip?.serial_number ?: equip?.device_name)?.toString()
+}
+
+/** Strip punctuation and case so "03-01-A2", "03:01:a2" and "0301a2" all compare equal. */
+String normalizeSerial(def s) {
+    return s?.toString()?.replaceAll(/[^A-Za-z0-9]/, "")?.toLowerCase()
+}
+
+/**
+ * Decide which discovered water heater this device controls.
+ *
+ * Returns -1 when a serial number was configured but could not be honoured. The
+ * caller must then do nothing at all: a selection the user made explicitly must
+ * never silently degrade into "whichever water heater happens to be first".
+ */
+int resolveIndex(List found) {
+    def wanted = settings.deviceSerial?.trim()
+    if (!wanted) return adoptSelection(found)
+
+    def wantNorm = normalizeSerial(wanted)
+    def exact    = []
+    def inside   = []
+    found.eachWithIndex { w, i ->
+        def n = normalizeSerial(unitId(w))
+        if (!n) return
+        if (n == wantNorm) exact << i
+        // Or the identifier found inside a whole row pasted in. Length-guarded so a
+        // short id can't match by coincidence.
+        else if (n.length() >= 6 && wantNorm.contains(n)) inside << i
+    }
+    // An exact match wins outright, so one unit's id appearing inside another's can't
+    // turn a precise selection into an ambiguous one.
+    def hits = exact ?: inside
+
+    if (hits.size() == 1) return hits[0] as int
+
+    if (hits.size() > 1) {
+        log.error "EcoNet WH: '${wanted}' matches ${hits.size()} water heaters — enter one serial number only, " +
+                  "not the contents of several rows. Not controlling any water heater until this is corrected."
+        return -1
+    }
+
+    // Nothing matched. Name the problem precisely rather than making the user guess.
+    def named = found.findIndexOf { w ->
+        ((w["@NAME"]?.value ?: w.device_name)?.toString()?.trim())?.equalsIgnoreCase(wanted)
+    }
+    if (named >= 0) {
+        log.error "EcoNet WH: '${wanted}' is a water heater's name, not its serial number. Use " +
+                  "${unitId(found[named])} instead. Not controlling any water heater until this is corrected."
+    } else {
+        log.error "EcoNet WH: no water heater on this account has serial '${wanted}'. Check the waterHeater0…" +
+                  "waterHeater${found.size() - 1} state variables, under State Variables on the device's Commands tab. Not controlling any " +
+                  "water heater until this is corrected."
+    }
+    return -1
+}
+
+/**
+ * Nothing is pinned yet. Choose a water heater and, where the choice isn't a guess,
+ * write its identifier into the serial preference so the device stays pinned.
+ *
+ * Two cases reach here:
+ *   - Upgrade from 0.1.x, which selected by a "Water heater index" preference. That
+ *     input is gone, but Hubitat keeps the saved value, so it is read once, turned
+ *     into a serial, and then deleted. The user's existing choice is preserved and
+ *     they never see the index again.
+ *   - A new install. With one water heater on the account there's nothing to choose,
+ *     so pin it. With several, pick the first but don't persist it — that would be
+ *     writing a guess into the user's configuration.
+ */
+int adoptSelection(List found) {
+    def legacyIndex = settings.deviceIndex
+    int idx = 0
+
+    if (legacyIndex != null) {
+        idx = legacyIndex as int
+        if (idx < 0 || idx >= found.size()) {
+            log.warn "EcoNet WH: saved water heater index ${idx} is out of range (${found.size()} found) — using the first"
+            idx = 0
+        }
+    }
+
+    if (legacyIndex != null || found.size() == 1) {
+        def id = unitId(found[idx])
+        if (id) {
+            device.updateSetting("deviceSerial", [value: id, type: "text"])
+            if (legacyIndex != null) {
+                device.removeSetting("deviceIndex")
+                log.info "EcoNet WH: upgraded — this device used water heater index ${idx} and is now pinned to " +
+                         "serial ${id}. The index preference has been retired and removed."
+            } else {
+                log.info "EcoNet WH: pinned this device to serial ${id}."
+            }
+        }
+        return idx
+    }
+
+    log.warn "EcoNet WH: ${found.size()} water heaters on this account and no serial number set — using the first " +
+             "(${unitId(found[0])}). Set the Water heater serial number preference to choose deliberately; " +
+             "each additional water heater needs its own Hubitat device using this driver."
+    return 0
 }
 
 void updateAttributes(Map equip) {
@@ -282,12 +579,10 @@ void updateAttributes(Map equip) {
     def modeDisplay = resolveModeDisplay(equip)
     if (modeDisplay != null) {
         sendEvent(name: "waterHeaterMode", value: modeDisplay)
-        sendEvent(name: "switch",          value: (modeDisplay == "off") ? "off" : "on")
+        sendEvent(name: "switch",          value: (modeDisplay in INACTIVE_MODES) ? "off" : "on")
         def tMode = WH_MODE_TO_THERMOSTAT[modeDisplay]
         if (tMode) sendEvent(name: "thermostatMode", value: tMode)
-        if (modeDisplay != "off" && modeDisplay != "vacation") {
-            state.lastActiveMode = modeDisplay
-        }
+        if (!(modeDisplay in INACTIVE_MODES)) state.lastActiveMode = modeDisplay
     }
 
     // Supported modes (read dynamically from device — never hardcoded)
@@ -412,7 +707,7 @@ def setHeatingSetpoint(temp) {
         log.error "EcoNet WH: setpoint ${t}${unit} out of range [${lo}–${hi}]"
         return
     }
-    publishCommand(["@SETPOINT": toFahrenheit(t).intValue()])
+    if (!publishCommand(["@SETPOINT": toFahrenheit(t).intValue()])) return
     sendEvent(name: "heatingSetpoint",    value: t, unit: unit)
     sendEvent(name: "thermostatSetpoint", value: t, unit: unit)
 }
@@ -421,18 +716,17 @@ def setWaterHeaterMode(String mode) {
     logDebug "setWaterHeaterMode(${mode})"
     def payload = buildModePayload(mode)
     if (payload == null) return   // error already logged in buildModePayload
-    publishCommand(payload)
+    if (!publishCommand(payload)) return
     sendEvent(name: "waterHeaterMode", value: mode)
-    sendEvent(name: "switch",          value: (mode == "off") ? "off" : "on")
+    sendEvent(name: "switch",          value: (mode in INACTIVE_MODES) ? "off" : "on")
     def tMode = WH_MODE_TO_THERMOSTAT[mode]
     if (tMode) sendEvent(name: "thermostatMode", value: tMode)
-    if (mode != "off" && mode != "vacation") state.lastActiveMode = mode
+    if (!(mode in INACTIVE_MODES)) state.lastActiveMode = mode
 }
 
 def setAwayMode(String mode) {
     logDebug "setAwayMode(${mode})"
-    publishCommand(["@AWAY": (mode == "away")])
-    sendEvent(name: "awayMode", value: mode)
+    if (publishCommand(["@AWAY": (mode == "away")])) sendEvent(name: "awayMode", value: mode)
 }
 
 // ThermostatMode capability — maps RM thermostat modes to water heater modes.
@@ -458,6 +752,9 @@ def setThermostatMode(String thermostatMode) {
             if (supported.contains("high demand")) setWaterHeaterMode("high demand")
             else log.warn "EcoNet WH: 'high demand' mode not available on this device"
             break
+        case "cool":
+            log.warn "EcoNet WH: a water heater has no cooling mode — '${thermostatMode}' ignored"
+            break
         default:
             log.warn "EcoNet WH: unsupported thermostat mode '${thermostatMode}'"
     }
@@ -466,6 +763,10 @@ def setThermostatMode(String thermostatMode) {
 def heat()          { setThermostatMode("heat") }
 def auto()          { setThermostatMode("auto") }
 def emergencyHeat() { setThermostatMode("emergency heat") }
+
+// The ThermostatMode capability declares cool(), and a dashboard tile or rule can call
+// it. Without a definition that call throws MissingMethodException.
+def cool()          { setThermostatMode("cool") }
 
 // Build the MQTT payload for a mode change.
 // Correctly handles all three device control styles and the ELECTRICGAS dual-mode entry.
@@ -492,12 +793,11 @@ def buildModePayload(String display) {
         def idx = findModeIndex(enumText, display, genericType)
         if (idx != null) {
             payload["@MODE"] = idx
-        } else if (!supportsOnOff) {
-            // @MODE is the only control mechanism and we can't find the mode
+        } else {
+            // Sending @ENABLED alone would turn the heater on in whatever mode it was last in
+            // while reporting the one requested, so refuse a mode this unit doesn't offer.
             log.error "EcoNet WH: mode '${display}' not found in device modes: ${enumText}"
             return null
-        } else {
-            log.warn "EcoNet WH: mode '${display}' not in enumText — relying on @ENABLED only"
         }
     }
 
@@ -516,15 +816,22 @@ def findModeIndex(List enumText, String display, String genericType) {
 // ---------------------------------------------------------------------------
 // Publish command via ClearBlade REST HTTP→MQTT bridge
 // ---------------------------------------------------------------------------
-void publishCommand(Map fields) {
-    if (!state.userToken || !state.deviceId || !state.serialNumber || !state.accountId) {
-        log.error "EcoNet WH: missing state — run refresh() or re-initialize"
-        return
+// Returns true only when the command was accepted, so callers update attributes only
+// for commands that actually went out.
+boolean publishCommand(Map fields, boolean isRetry = false) {
+    if (!state.userToken) {
+        log.error "EcoNet WH: not logged in — command not sent: ${fields}"
+        return false
+    }
+    if (!state.deviceId || !state.serialNumber || !state.accountId) {
+        log.error "EcoNet WH: no unit selected — command not sent: ${fields}. Run refresh(), or check the serial number preference."
+        return false
     }
 
-    def now = new Date().format("yyyy-MM-dd'T'HH:mm:ss")
+    // Millisecond resolution, so commands sent within the same second get distinct IDs
+    def stamp = new Date().format("yyyy-MM-dd'T'HH:mm:ss.SSS")
     def mqttPayload = [
-        transactionId : "HUBITAT_${now}",
+        transactionId : "HUBITAT_${stamp}",
         device_name   : state.deviceId,
         serial_number : state.serialNumber,
     ] + fields
@@ -541,22 +848,32 @@ void publishCommand(Map fields) {
         timeout   : 15,
     ]
 
+    boolean ok      = false
+    boolean expired = false
     try {
         httpPost(params) { resp ->
-            if (resp.status == 200) {
-                logDebug "Command published OK: ${fields}"
-                runIn(5, "fetchEquipment")
-            } else if (resp.status == 401) {
-                log.warn "EcoNet WH token expired during command — re-authenticating"
-                state.userToken = null
-                login()
-            } else {
-                log.error "EcoNet WH publishCommand HTTP ${resp.status}"
-            }
+            if (resp.status == 200)      ok = true
+            else if (resp.status == 401) expired = true
+            else log.error "EcoNet WH publishCommand HTTP ${resp.status} — body: ${resp.data}"
         }
     } catch (Exception e) {
-        log.error "EcoNet WH publishCommand exception: ${e.message}"
+        if (httpErrorStatus(e) == 401) expired = true
+        else log.error "EcoNet WH publishCommand exception: ${e.message}"
     }
+
+    if (expired) {
+        handleUnauthorized("command")
+        // login() is synchronous, so if it worked a new token is already in place: send once more
+        if (!isRetry && state.userToken) return publishCommand(fields, true)
+        log.error "EcoNet WH: command not sent: ${fields}"
+        return false
+    }
+    if (ok) {
+        logDebug "Command published OK: ${fields}"
+        // Re-poll after 5 s to confirm the device accepted the change
+        runIn(5, "fetchEquipment")
+    }
+    return ok
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Indoor Module - Hubitat Driver
- * Version: 0.2.0
+ * Version: 0.3.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -27,10 +27,16 @@ metadata {
         attribute "minTemperatureTime", "string"
         attribute "maxTemperatureTime", "string"
         attribute "rfStatus", "number"
+        attribute "batteryVp", "number"
         attribute "reachable", "string"
         attribute "lastSeen", "string"
+        attribute "lastMessage", "string"
         attribute "measurementTime", "string"
         attribute "temperatureTrend", "string"
+        attribute "healthIndex", "number"
+        attribute "healthStatus", "string"
+        attribute "firmware", "number"
+        attribute "dataTypes", "string"
         attribute "stationName", "string"
         attribute "moduleName", "string"
         attribute "lastUpdated", "string"
@@ -76,13 +82,20 @@ def updatedFromParent(Map data) {
     sendEventIfPresent("carbonDioxide", dashboard.co2, "ppm")
     sendEventIfPresent("battery", metadata.batteryPercent, "%")
     sendEventIfPresent("rfStatus", metadata.rfStatus)
+    sendEventIfPresent("batteryVp", metadata.batteryVp)
+    sendEventIfPresent("firmware", metadata.firmware)
+    sendEventIfPresent("dataTypes", joinListValue(metadata.dataTypes))
     sendEventIfPresent("temperatureTrend", dashboard.tempTrend)
+    sendEventIfPresent("healthIndex", dashboard.healthIndex)
+    sendEventIfPresent("healthStatus", dashboard.healthStatus)
     sendEventIfPresent("reachable", data.reachable == null ? null : data.reachable.toString())
     sendEventIfPresent("stationName", data.stationName)
     sendEventIfPresent("moduleName", data.moduleName)
 
     String lastSeenValue = formatEpochSeconds(data.lastSeen)
     sendEventIfPresent("lastSeen", lastSeenValue)
+    String lastMessageValue = formatEpochSeconds(data.lastMessage)
+    sendEventIfPresent("lastMessage", lastMessageValue)
     sendEventIfPresent("measurementTime", data.measurementTime)
     sendEvent(name: "lastUpdated", value: formatNow())
 }
@@ -101,6 +114,16 @@ private void sendEventIfPresent(String name, Object value, String unit = null) {
 
 private String temperatureUnit() {
     return location?.temperatureScale ?: "F"
+}
+
+private String joinListValue(Object value) {
+    if (value == null) {
+        return null
+    }
+    if (value instanceof List) {
+        return value.collect { it as String }.join(", ")
+    }
+    return value as String
 }
 
 private String formatEpochSeconds(Object value) {

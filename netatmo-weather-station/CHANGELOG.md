@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.4.0] - 2026-08-12
+
+This release is focused on setup and first-run experience. Existing working
+installations are unaffected and need no changes.
+
+Changed:
+
+- The setup page now shows only **Netatmo API Credentials**, **Authorization**, and **Logging** until authorization succeeds. Diagnostics, Discovery, Child Devices, Units, and Polling appear once you are authorized, so a first-time setup page is no longer a wall of unusable controls. Logging stays visible throughout so debug logging can be enabled while troubleshooting authorization.
+- Renamed the **Test getstationsdata** button to **Test Netatmo connection**, and reworded its status messages in plain language.
+- The connection test now runs automatically right after a successful authorization, so the page reports **Netatmo connection OK** with station and module counts without any extra clicks.
+- The authorization callback page now explains how to fix the specific failure it received, instead of only printing Netatmo's raw error code. Covers `redirect_uri_mismatch`, `invalid_client`, and `access_denied`.
+- The callback page now refers to the *integration page* rather than the *app page*, matching Hubitat's current navigation.
+- **Sync child labels from Netatmo names** is hidden until at least one child device exists. Previously it could be toggled on with no children present and would silently do nothing.
+
+- Station discovery now runs automatically right after authorization, alongside the connection test, so your Netatmo devices are already listed when you return to the settings page.
+- The **Child Devices** section is hidden until at least one device is selected, so **Create/update selected supported devices** can no longer be clicked in a state where it does nothing.
+- The Discovery section now shows which devices are selected. Selecting nothing produces a highlighted warning that nothing will be created; selecting devices produces a confirmation listing them by name.
+- Moved **Refresh station discovery** below the device picker, since discovery now runs on its own and the picker is what most people need first.
+- **Child Devices** now reports live state — how many of your selected devices actually exist in Hubitat right now — instead of only replaying the result of the last sync. The previous behavior could claim devices had been created after they were deleted, or immediately on opening the section before any sync had run in that session. The last-run result is still shown, now clearly labelled as history.
+- Added a prominent reminder that settings are not saved until **Done** is clicked. Hubitat places that button at the bottom right, past every other section, and an integration abandoned before clicking it is never actually added even though child devices may already exist. The reminder appears at the top and bottom of the page until the app has been installed once, then shrinks to a single quiet line.
+- **Clear stored Netatmo tokens** now appears only when authorized, and explains what it does and does not affect.
+- The Authorization section now explains that a newly typed Client Secret is not registered until the field loses focus, which previously looked like the authorization link failing to appear.
+
+Removed:
+
+- The Netatmo callback URL is no longer displayed, and setup no longer asks you to paste it into a **Redirect URI** field on Netatmo. The integration never required one, and a stored Redirect URI was the cause of `redirect_uri_mismatch` failures when a Netatmo application was reused across hubs or an integration instance was recreated. Existing installations that already have a Redirect URI saved continue to work.
+
+Documentation:
+
+- Rewrote the setup walkthrough: explicit Netatmo developer portal navigation, a terminology table distinguishing the Netatmo developer application, the Hubitat integration, and the Netatmo mobile app, and corrected Hubitat navigation (**Integrations** → **Add user integration**).
+- Added troubleshooting entries for `redirect_uri_mismatch` and `invalid_client`.
+
+## [0.3.0] - 2026-06-18
+
+Added:
+
+- Exposed Netatmo `AbsolutePressure` as `absolutePressure` on the base station.
+- Exposed Netatmo `Noise` through Hubitat's standard `soundPressureLevel` event on the base station, while keeping the existing `noise` event.
+- Added `lastMessage` timestamp support from Netatmo `last_message`.
+- Added battery voltage, firmware, and Netatmo data type metadata where Netatmo provides it.
+- Added non-sensitive station place metadata for the base station: city, altitude, and timezone.
+- Added optional Netatmo health index/status fields where Netatmo provides `health_idx`.
+- Expanded field diagnostics to show selected raw metadata values and normalized metadata values.
+- Base stations now report `lastSeen` and `lastMessage` as `Not provided` when Netatmo omits those communication timestamps.
+
+## [0.2.1] - 2026-06-18
+
+Changed:
+
+- Added scheduled-poll stale detection in the parent app UI.
+- Added **Reschedule polling** action to refresh Hubitat's scheduled poll job.
+- Wrapped scheduled polling in top-level error handling so unexpected failures update app status instead of failing silently.
+- Clarified setup documentation, including that package installation alone does not create child devices.
+
 ## [0.2.0] - 2026-04-25
 
 Added:

@@ -26,6 +26,8 @@ The integration uses Netatmo's cloud API with OAuth authentication. The parent H
 - App-level unit preferences
 - Measurement timestamp support
 - Daily minimum/maximum temperature values where Netatmo provides them
+- Additional Netatmo metadata such as firmware, last message time, battery voltage, and non-sensitive station place details
+- Standard Hubitat sound pressure level support for base station noise readings
 
 ## Requirements
 
@@ -44,54 +46,102 @@ After this package metadata is published, install **Netatmo Weather Station Conn
 
 Manual installation:
 
-1. In Hubitat, open **Drivers Code**.
+1. In Hubitat, open **Drivers code**.
 2. Add and save each driver:
    - `NetatmoWeatherBaseStation.groovy`
    - `NetatmoWeatherOutdoorModule.groovy`
    - `NetatmoWeatherIndoorModule.groovy`
    - `NetatmoWeatherRainGauge.groovy`
    - `NetatmoWeatherWindGauge.groovy`
-3. In Hubitat, open **Apps Code**.
+3. In Hubitat, open **Apps code**.
 4. Add and save `NetatmoWeatherStationConnect.groovy`.
-5. Enable OAuth for the app in Hubitat Apps Code if Hubitat does not enable it automatically.
-6. Open **Apps**, choose **Add User App**, and add **Netatmo Weather Station Connect**.
+5. **Confirm OAuth is enabled for the app — this is required.** While still in **Apps code** with `NetatmoWeatherStationConnect.groovy` open, click **OAuth** and make sure it is enabled. Without it, authorization cannot start. If you later see *"Hubitat app OAuth is not enabled yet"* on the settings page, come back and do this.
+6. In the left-hand menu, click **Integrations** (not **Apps** — this integration installs itself under **Integrations**). Click **Add user integration**, then choose **Netatmo Weather Station Connect** from the list.
 
-## Netatmo Developer App Setup
+This last step is required. Adding the code under **Apps code** only makes the integration *available to install*; it does not create a usable instance. You must add the user integration before you can enter any credentials.
 
-You need a Netatmo developer app so Hubitat can authenticate with Netatmo.
+## Setup
 
-1. Go to the Netatmo developer portal: https://dev.netatmo.com/
-2. Sign in with the Netatmo account that owns or has access to your Weather Station.
-3. Open the developer app/application management area.
-4. Create a new application, or open an existing application you want to use for Hubitat.
-5. Give the application a recognizable name, such as `Hubitat Netatmo Weather Station`.
-6. Save the application so Netatmo generates a client ID and client secret.
-7. Copy the Netatmo client ID and client secret.
-8. Enter those credentials in the Hubitat app and click **Done**.
-9. Reopen the Hubitat app. It will display a Netatmo callback URL.
-10. Copy that callback URL into the Netatmo developer app settings where redirect or callback URLs are configured.
-11. Save the Netatmo developer app settings.
-12. Return to Hubitat and use the authorization link to authorize Netatmo access.
+Setup has two stages: create an application on Netatmo's developer website to get a Client ID and Client Secret, then paste those into the integration on your hub. Everything after that happens in Hubitat.
 
-Netatmo's developer UI may change over time, so use the field that controls allowed OAuth redirect/callback URLs. The URL shown by Hubitat must match the redirect URI sent during authorization.
+Read this terminology note first — most setup problems come from confusing these three things:
 
-The Netatmo token generator is not needed for this integration. Hubitat handles OAuth through the authorization link and callback URL.
+| Term | What it actually is | Where it lives |
+|---|---|---|
+| **Netatmo developer application** | A registration you create so Hubitat can talk to your Netatmo account. It is not software you install or open. Its only purpose is to generate a Client ID and Client Secret. | https://dev.netatmo.com/ |
+| **The Hubitat integration** | Netatmo Weather Station Connect running on your hub. It has its own settings page with text fields. | Your Hubitat hub's web interface |
+| **The Netatmo mobile app** | The normal Netatmo phone app you use to read your weather station. | Your phone |
 
-## Setup In Hubitat
+**You never enter the Client ID or Client Secret into the Netatmo mobile app.** They are *generated* on the Netatmo developer website and *entered* on your Hubitat hub. The Netatmo mobile app plays no part in setup.
 
-1. Enter the Netatmo client ID and client secret.
-2. Use the authorization link to authorize with Netatmo.
-3. Return to the Hubitat app page after authorization and refresh the page if needed.
-4. Run **Test getstationsdata** to confirm Netatmo API access.
-5. Run **Refresh station discovery**.
-6. Select the devices you want Hubitat to manage.
-7. Run **Create/update selected supported devices**.
-8. Choose the poll interval.
-9. Choose app-level unit preferences.
+> The Netatmo portal steps below were accurate when this was written. Netatmo can change their screens, wording, and options at any time. If what you see no longer matches, the general shape of the process should still apply — and please open an issue or post in the Hubitat community thread so this can be updated.
+
+### Step 1: Create the Netatmo developer application
+
+This entire step happens in a web browser on Netatmo's website. You are not touching Hubitat yet.
+
+1. Go to https://dev.netatmo.com/
+2. If you are not already signed in, click **Log in** in the upper-right corner and sign in with the Netatmo account that owns your Weather Station.
+3. Click your username in the upper-right corner and choose **My apps** (direct link: https://dev.netatmo.com/apps/).
+4. Click the orange **Create** button.
+5. Fill in the required fields. **Name** and **Description** are yours to choose — something like `Hubitat Weather Station` and `Hubitat integration` is fine. **Your full name** and **email address** are also required, and are easy to miss.
+6. Tick the box to accept the terms and conditions, then click **Save**.
+7. The page reloads and now shows an **App Technical Parameters** section containing your **client id** and **client secret**. Keep this tab open — you will copy both in the next step.
+
+![The Netatmo developer application settings page. App information is at the top; the App Technical Parameters section below it holds the redirect URI, webhook URI, client ID, and client secret. The client ID and secret are redacted in this example, and the redirect URI is left empty.](Netatmo_DeveloperApp_screenshot.png)
+
+*Your finished application should look like this. The redacted fields are the ones unique to your account — the two on the right, **client ID** and **client secret**, are what you copy into Hubitat.*
+
+**Leave the Redirect URI field empty**, exactly as shown above. This integration does not need one. If you are reusing an application you created earlier and that field already has a URL in it, clear it and save — otherwise authorization will fail with `redirect_uri_mismatch`.
+
+The Netatmo token generator on that page is not needed. Hubitat handles the whole authorization exchange itself.
+
+### Step 2: Enter the credentials in Hubitat
+
+1. Open your Hubitat hub's web interface in a browser.
+2. In the left-hand menu, click **Integrations**. This is a different menu item from **Apps** — this integration appears under **Integrations**, and you will not find it under **Apps**.
+3. In the list, click **Netatmo Weather Station Connect** — the instance you added at the end of [Installation](#installation).
+
+   Clicking it opens its settings page. **This page on your own hub is where the credentials go** — not a page on Netatmo's website, and not the Netatmo phone app. If you do not see **Netatmo Weather Station Connect** in the list, you have not yet completed step 6 of [Installation](#installation); adding the code under **Apps code** is not enough by itself.
+4. The first section is **Netatmo API Credentials**, with two fields: **Client ID** and **Client Secret**. Both read **Click to set** until you fill them in — click the field and type into it.
+
+![The Netatmo Weather Station Connect settings page in Hubitat as it appears on first opening. A red notice at the top reads "This integration is not added to your hub yet." Below it, the Netatmo API Credentials section has empty Client ID and Client Secret fields, both showing "Click to set". The Authorization section reads "Not authenticated" and explains that the authorization link appears once both credentials are entered. A Logging section follows, then a second red reminder to click Done, with the Done button in the lower right.](Netatmo_HubitatSetup_screenshot.png)
+
+*This is exactly what you see when you first open the integration. Only these three sections appear before you authorize — Discovery, Child Devices, Units, and Polling show up afterward. The red notices at the top and bottom remain until you click **Done** in the lower right, which is the step people most often miss.*
+
+5. Copy the **client id** from the Netatmo tab into **Client ID**, and the **client secret** into **Client Secret**. The secret is masked as you type, which is normal.
+6. **After typing or pasting the secret, click somewhere else on the page or press Enter.** Hubitat does not register the value until the field loses focus. The page then refreshes and an **Authorize Netatmo** link appears in the **Authorization** section.
+
+If **Authorization** still asks you to enter your credentials, one of the two fields has not registered — click into it and back out again.
+
+If it says *"Hubitat app OAuth is not enabled yet,"* you skipped step 5 of [Installation](#installation). Go to **Apps code**, open `NetatmoWeatherStationConnect`, click **OAuth**, enable it, then come back.
+
+### Step 3: Authorize, then create your devices
+
+1. Click **Authorize Netatmo**. A Netatmo page opens asking you to allow access — click **YES, I ACCEPT**.
+2. You should see *"Netatmo authorization succeeded."* Close that tab and return to the integration page in Hubitat, then refresh it.
+
+   If you see *"Netatmo authorization failed"* instead, the page now tells you what to do about it. `redirect_uri_mismatch` is the most common one — see [Troubleshooting](#netatmo-returned-redirect_uri_mismatch).
+3. **Diagnostics** should report **Netatmo connection OK** with station and module counts, and **Discovery** should already list your Netatmo devices. Both run automatically right after you authorize — you do not need to start them. If Discovery is empty, click **Refresh station discovery**.
+4. Under **Select Netatmo devices**, tick the devices you want Hubitat to manage.
+
+   **This step is required and easy to skip.** Until you select at least one device, a highlighted note tells you nothing will be created, and the **Child Devices** section is not shown at all. It appears as soon as you make a selection, and a green summary confirms what you picked.
+5. In **Child Devices**, click **Create/update selected supported devices**. The section tells you how many of your selected devices still need creating, and turns green once they all exist in Hubitat.
+6. Choose your **Poll Interval**.
+7. Choose your unit preferences under **Units**.
+8. **Scroll to the bottom of the page and click Done.** This is the step people miss. Hubitat puts **Done** in the lower right, past Units, Polling, and Logging, and until you click it the integration is not actually added to your hub — nothing is saved and polling never starts, even if child devices were already created. The page warns you about this until the first time you click it.
+
+You can reopen the integration and change any of these settings later. Each time you do, click **Done** again to save.
+
+**Sync child labels from Netatmo names** appears once at least one child device exists. Turning it on makes the next **Create/update selected supported devices** rename your Hubitat devices to match their current Netatmo names — useful if you rename things in the Netatmo app and want Hubitat to follow.
+
+Until you authorize, the settings page shows only credentials, authorization, and logging. The remaining sections appear once authorization succeeds.
 
 Polling updates existing selected child devices. It does not create child devices automatically; use the manual create/update action for child creation.
 
-Use **Run poll now** to verify polling immediately after changing the poll interval or saving the app.
+Installing the package does not create devices by itself. Child devices are created only after authorization, discovery, selecting modules, and running **Create/update selected supported devices**.
+
+Use **Run poll now** to verify the data path immediately after changing the poll interval or saving the app. Use **Reschedule polling** if the app reports that scheduled polling appears stale.
 
 ## Unit Preferences
 
@@ -107,13 +157,27 @@ Netatmo source values are normalized and converted in the parent app before valu
 
 ## Timestamps
 
-The integration exposes three different timestamps:
+The integration exposes four different timestamps:
 
 - `lastSeen`: when Netatmo last heard from the module, from Netatmo `last_seen`
 - `measurementTime`: timestamp of the latest Netatmo dashboard reading, from `dashboard_data.time_utc`
+- `lastMessage`: timestamp of the latest Netatmo message from the module, from Netatmo `last_message`
 - `lastUpdated`: when the Hubitat child device was updated by this integration
 
-Stale or unreachable modules may have `lastSeen` metadata while missing current dashboard fields and `measurementTime`.
+Stale or unreachable modules may have `lastSeen` or `lastMessage` metadata while missing current dashboard fields and `measurementTime`.
+For base stations, Netatmo may not provide useful `last_seen` or `last_message` data; the base station driver reports those attributes as `Not provided` when the fields are absent.
+
+## Exposed Fields
+
+The parent app normalizes Netatmo API data before sending values to child devices. Drivers skip missing values, so stale or unreachable modules keep their last known Hubitat values instead of being cleared by an incomplete API response.
+
+Base station devices expose temperature, humidity, CO2, pressure, absolute pressure, noise, sound pressure level, Wi-Fi status, daily minimum/maximum temperature values, measurement timestamps, firmware, data types, and non-sensitive station place details where Netatmo provides them.
+
+Outdoor and additional indoor modules expose their measurement values, RF status, battery percentage, battery voltage, firmware, data types, daily minimum/maximum temperature values, and timestamps where Netatmo provides them.
+
+Rain and wind gauges expose their measurement values, RF status, battery percentage, battery voltage, firmware, data types, and timestamps where Netatmo provides them. Rain and wind values depend on what Netatmo returns for active and reachable modules.
+
+The base station uses Hubitat's standard `SoundPressureLevel` capability for Netatmo's numeric `Noise` value. It does not create a threshold-based sound detected/not detected event.
 
 ## Diagnostics
 
@@ -123,6 +187,7 @@ Diagnostics show:
 
 - Device name, type, class, and DNI
 - Reachability and timestamp information
+- Selected raw device and metadata keys
 - Raw `dashboard_data` keys present in Netatmo's response
 - Normalized dashboard values after unit conversion
 - Normalized metadata fields
@@ -145,17 +210,32 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 
 ## Troubleshooting
 
-### OAuth or Callback Problems
+### Netatmo returned `redirect_uri_mismatch`
 
-- Confirm OAuth is enabled for the Hubitat app in Apps Code.
-- Confirm the callback URL shown in Hubitat is configured in the Netatmo developer app.
-- Confirm the client ID and client secret are correct.
-- Reauthorize after changing callback URL or credentials.
-- Refresh the Hubitat app page after completing Netatmo authorization.
+Your Netatmo application has a **Redirect URI** saved that does not match this hub. This integration does not need a Redirect URI at all.
+
+1. Sign in at https://dev.netatmo.com/apps/ and open the application whose Client ID you entered in Hubitat.
+2. Clear the **Redirect URI** field in **App Technical Parameters**, then click **Save**.
+3. Return to Hubitat and click **Authorize Netatmo** again.
+
+This most often happens when you reuse one Netatmo application across two hubs, since the saved URI points at whichever hub authorized first. **If that application is in use on another Hubitat hub, create a separate Netatmo application for this hub instead** of clearing the field.
+
+Clearing stored Netatmo tokens does not fix this — the mismatch is on Netatmo's side, not in Hubitat's saved tokens.
+
+### Netatmo returned `invalid_client`
+
+Netatmo did not recognize the Client ID or Client Secret. Recopy both from **App Technical Parameters** at https://dev.netatmo.com/apps/ and paste them into Hubitat again, checking for stray leading or trailing spaces.
+
+### Other authorization problems
+
+- Confirm OAuth is enabled for the app in **Apps code** — the settings page says *"Hubitat app OAuth is not enabled yet"* when it is not.
+- Refresh the integration page after completing Netatmo authorization; the status does not update on its own.
+- Check Hubitat **Logs** while clicking **Authorize Netatmo** for the specific error.
+- Enable **debug logging** at the bottom of the settings page for more detail. It stays available even when you are not authorized.
 
 ### No Devices Found
 
-- Run **Test getstationsdata** first.
+- Click **Test Netatmo connection** first.
 - Confirm the Netatmo account has Weather Station devices.
 - Confirm the Netatmo developer app is authorized for station read access.
 - Check Hubitat logs for API or token errors.
@@ -163,20 +243,42 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 ### Selected Device Does Not Create a Child
 
 - Confirm the device is selected in the discovery list.
-- Run **Create/update selected supported devices**.
+- Click **Create/update selected supported devices**.
 - Confirm the matching driver is installed and saved before running sync.
 - Check Hubitat logs for child creation warnings.
 
+### Everything Looked Right, but Nothing Works
+
+Check that you clicked **Done** at the bottom right of the settings page. Until you do, Hubitat has not finished adding the integration: settings are not saved and polling never starts. Child devices created before clicking **Done** will exist but will not update. Reopen the integration, confirm your settings are still there, and click **Done**.
+
+### Devices Do Not Appear After Installation
+
+- Open **Integrations** and create/open **Netatmo Weather Station Connect**.
+- Enter the Netatmo client ID and client secret, then click **Done**.
+- Reopen the app and authorize Netatmo.
+- Click **Refresh station discovery**.
+- Select the modules you want.
+- Click **Create/update selected supported devices**.
+- Child devices appear only after the selected-device sync succeeds.
+
+### Scheduled Polling Stops Updating Devices
+
+- Open **Netatmo Weather Station Connect** from **Integrations** and check the Polling section.
+- Click **Run poll now** to confirm the API and child update path still works.
+- Click **Reschedule polling** to refresh Hubitat's scheduled job.
+- Click **Done** after changing the poll interval or after package updates.
+- Check Hubitat logs if the app reports a polling error.
+
 ### Missing Rain or Wind Fields
 
-- Run **Inspect available fields**.
+- Click **Inspect available fields**.
 - Check whether Netatmo returned the raw dashboard fields.
 - If raw fields are missing, the driver cannot expose current values for that reading.
 - Stale or unreachable modules may return metadata but no current rain or wind dashboard values.
 
 ### Stale or Unreachable Modules
 
-- Check `reachable`, `lastSeen`, and `measurementTime`.
+- Check `reachable`, `lastSeen`, `lastMessage`, and `measurementTime`.
 - `lastSeen` may show the last module communication time even when current dashboard values are absent.
 - `measurementTime` is present only when Netatmo returns a dashboard reading timestamp.
 

@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.2.0
+ * Version: 0.4.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -33,7 +33,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.2.0" }
+private String appVersion() { return "0.4.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -55,6 +55,7 @@ def uninstalled() {
 }
 
 def initialize() {
+    state.setupCompleted = true
     unschedule()
     state.appVersion = appVersion()
     migrateNetatmoTokenState()
@@ -66,8 +67,17 @@ def mainPage() {
     migrateNetatmoTokenState()
     Boolean endpointOauthReady = ensureEndpointAccessToken()
     String authorizationUrl = endpointOauthReady && credentialsConfigured() ? buildAuthorizeUrl() : ""
+    repairStalePollingIfNeeded()
 
     return dynamicPage(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true) {
+        if (!setupSaved()) {
+            section {
+                paragraph urgentCalloutHtml("<b>This integration is not added to your hub yet.</b> " +
+                    "Nothing on this page is saved, and polling will not start, until you scroll to the bottom of this page " +
+                    "and click <b>Done</b> in the lower right. You can come back and change any of these settings afterward.")
+            }
+        }
+
         section("Netatmo API Credentials") {
             paragraph "Create an application at https://dev.netatmo.com/ and enter its client credentials here."
             input name: "clientId",
@@ -85,23 +95,25 @@ def mainPage() {
         section("Authorization") {
             paragraph authenticationStatusText()
             if (!endpointOauthReady) {
-                paragraph "Hubitat app OAuth is not enabled yet. Save this app code, open it in Apps Code, click OAuth, enable OAuth, then return here."
+                paragraph "Hubitat app OAuth is not enabled yet. Go to Apps code, open NetatmoWeatherStationConnect, click OAuth, enable it, then return here."
             } else if (credentialsConfigured()) {
-                paragraph "Netatmo callback URL:\n${callbackUrl()}"
                 paragraph authorizationLinkHtml(authorizationUrl, state.netatmoAuthenticated ? "Reauthorize Netatmo" : "Authorize Netatmo")
-                input name: "clearAuthorization",
-                    type: "button",
-                    title: "Clear stored Netatmo tokens"
+                if (state.netatmoAuthenticated) {
+                    input name: "clearAuthorization",
+                        type: "button",
+                        title: "Clear stored Netatmo tokens"
+                    paragraph "Clearing tokens signs this hub out of Netatmo and hides the sections below until you authorize again. It does not delete child devices, and it does not change anything in your Netatmo account."
+                }
             } else {
-                paragraph "Enter and save the Netatmo client credentials before authorizing."
+                paragraph "Enter your Netatmo Client ID and Client Secret above. After typing the secret, click elsewhere on the page or press Enter so Hubitat registers it, and the authorization link will appear here."
             }
         }
 
-        section("Diagnostics") {
-            if (state.netatmoAuthenticated) {
+        if (state.netatmoAuthenticated) {
+            section("Diagnostics") {
                 input name: "testStationsData",
                     type: "button",
-                    title: "Test getstationsdata"
+                    title: "Test Netatmo connection"
                 input name: "inspectAvailableFields",
                     type: "button",
                     title: "Inspect available fields"
@@ -110,121 +122,127 @@ def mainPage() {
                         type: "button",
                         title: "Clear field diagnostics"
                 }
-            } else {
-                paragraph "Authorize Netatmo before running the API diagnostic."
+                paragraph diagnosticStatusText()
+                if (state.lastFieldDiagnostic) {
+                    paragraph fieldDiagnosticDisplayHtml(state.lastFieldDiagnostic instanceof Map ? (Map)state.lastFieldDiagnostic : [:])
+                }
             }
-            paragraph diagnosticStatusText()
-            if (state.lastFieldDiagnostic) {
-                paragraph fieldDiagnosticDisplayHtml(state.lastFieldDiagnostic instanceof Map ? (Map)state.lastFieldDiagnostic : [:])
-            }
-        }
 
-        section("Discovery") {
-            if (!state.netatmoAuthenticated) {
-                paragraph "Authorize Netatmo before discovering stations and modules."
-            } else {
-                input name: "refreshDiscovery",
-                    type: "button",
-                    title: "Refresh station discovery"
-                paragraph discoveryStatusText()
-                Map discovery = cachedDiscovery()
+            Map discovery = cachedDiscovery()
+            List selectedDnis = selectedDeviceDniList()
+
+            section("Discovery") {
                 if (discovery) {
                     input name: "selectedDeviceDnis",
                         type: "enum",
                         title: "Select Netatmo devices",
+                        description: "Tap to choose which discovered devices Hubitat should create.",
                         options: discoverySelectionOptions(discovery),
                         multiple: true,
-                        required: false
+                        required: false,
+                        submitOnChange: true
+                    paragraph selectionSummaryHtml(discovery, selectedDnis)
                     paragraph discoveryDisplayHtml(discovery)
                 } else {
-                    paragraph "No discovered devices are cached yet. Run station discovery to populate this list."
+                    paragraph calloutHtml("No devices have been discovered yet. Click <b>Refresh station discovery</b> below to look for your Netatmo stations and modules.")
+                }
+                input name: "refreshDiscovery",
+                    type: "button",
+                    title: "Refresh station discovery"
+                paragraph discoveryStatusText()
+            }
+
+            if (selectedDnis) {
+                section("Child Devices") {
+                    paragraph "Supported child devices: Base Station, Outdoor Module, Indoor Module, Rain Gauge, and Wind Gauge."
+                    if (hasChildDevices()) {
+                        input name: "syncLabels",
+                            type: "bool",
+                            title: "Sync child labels from Netatmo names",
+                            description: "Renames existing child devices to match their current Netatmo names the next time you create/update devices.",
+                            defaultValue: false,
+                            required: false
+                    }
+                    paragraph childDeviceStatusHtml(selectedDnis)
+                    input name: "syncSupportedDevices",
+                        type: "button",
+                        title: "Create/update selected supported devices"
+                    paragraph supportedDeviceSyncStatusText()
                 }
             }
-        }
 
-        section("Child Devices") {
-            paragraph "Supported child devices: Base Station, Outdoor Module, Indoor Module, Rain Gauge, and Wind Gauge."
-            if (!state.netatmoAuthenticated) {
-                paragraph "Authorize Netatmo before creating or updating child devices."
-            } else {
-                input name: "syncLabels",
-                    type: "bool",
-                    title: "Sync child labels from Netatmo names",
-                    defaultValue: false,
-                    required: false
-                input name: "syncSupportedDevices",
-                    type: "button",
-                    title: "Create/update selected supported devices"
-                paragraph supportedDeviceSyncStatusText()
+            section("Units") {
+                input name: "temperatureUnitPreference",
+                    type: "enum",
+                    title: "Temperature",
+                    options: [
+                        "location": "Hubitat location default",
+                        "C": "Celsius",
+                        "F": "Fahrenheit"
+                    ],
+                    defaultValue: "location",
+                    required: true
+                input name: "pressureUnitPreference",
+                    type: "enum",
+                    title: "Pressure",
+                    options: [
+                        "hpa": "hPa / mbar",
+                        "inHg": "inHg"
+                    ],
+                    defaultValue: "hpa",
+                    required: true
+                input name: "rainUnitPreference",
+                    type: "enum",
+                    title: "Rain",
+                    options: [
+                        "mm": "mm",
+                        "in": "inches"
+                    ],
+                    defaultValue: "mm",
+                    required: true
+                input name: "windUnitPreference",
+                    type: "enum",
+                    title: "Wind speed",
+                    options: [
+                        "kmh": "km/h",
+                        "mph": "mph",
+                        "ms": "m/s",
+                        "kn": "knots"
+                    ],
+                    defaultValue: defaultWindUnitPreference(),
+                    required: true
+                input name: "windDirectionDisplayPreference",
+                    type: "enum",
+                    title: "Wind direction",
+                    options: [
+                        "angle": "Numeric angle",
+                        "cardinal": "Text direction",
+                        "both": "Angle and text direction"
+                    ],
+                    defaultValue: "both",
+                    required: true
+                paragraph "Unit preferences are applied by the parent app before child devices are updated."
             }
-        }
 
-        section("Units") {
-            input name: "temperatureUnitPreference",
-                type: "enum",
-                title: "Temperature",
-                options: [
-                    "location": "Hubitat location default",
-                    "C": "Celsius",
-                    "F": "Fahrenheit"
-                ],
-                defaultValue: "location",
-                required: true
-            input name: "pressureUnitPreference",
-                type: "enum",
-                title: "Pressure",
-                options: [
-                    "hpa": "hPa / mbar",
-                    "inHg": "inHg"
-                ],
-                defaultValue: "hpa",
-                required: true
-            input name: "rainUnitPreference",
-                type: "enum",
-                title: "Rain",
-                options: [
-                    "mm": "mm",
-                    "in": "inches"
-                ],
-                defaultValue: "mm",
-                required: true
-            input name: "windUnitPreference",
-                type: "enum",
-                title: "Wind speed",
-                options: [
-                    "kmh": "km/h",
-                    "mph": "mph",
-                    "ms": "m/s",
-                    "kn": "knots"
-                ],
-                defaultValue: defaultWindUnitPreference(),
-                required: true
-            input name: "windDirectionDisplayPreference",
-                type: "enum",
-                title: "Wind direction",
-                options: [
-                    "angle": "Numeric angle",
-                    "cardinal": "Text direction",
-                    "both": "Angle and text direction"
-                ],
-                defaultValue: "both",
-                required: true
-            paragraph "Unit preferences are applied by the parent app before child devices are updated."
-        }
-
-        section("Polling") {
-            input name: "pollIntervalMinutes",
-                type: "enum",
-                title: "Poll Interval",
-                options: pollIntervalOptions(),
-                defaultValue: "5",
-                required: true
-            if (state.netatmoAuthenticated) {
+            section("Polling") {
+                input name: "pollIntervalMinutes",
+                    type: "enum",
+                    title: "Poll Interval",
+                    options: pollIntervalOptions(),
+                    defaultValue: "5",
+                    required: true
                 input name: "runPollNow",
                     type: "button",
                     title: "Run poll now"
+                input name: "reschedulePolling",
+                    type: "button",
+                    title: "Reschedule polling"
+                String healthWarning = pollHealthWarningText()
+                if (healthWarning) {
+                    paragraph healthWarning
+                }
+                paragraph pollStatusText()
             }
-            paragraph pollStatusText()
         }
 
         section("Logging") {
@@ -234,7 +252,70 @@ def mainPage() {
                 defaultValue: false,
                 required: false
         }
+
+        section {
+            paragraph setupSaved()
+                ? "Changes on this page take effect when you click <b>Done</b> below."
+                : urgentCalloutHtml("<b>Don't forget:</b> click <b>Done</b> in the lower right to finish adding this integration.")
+        }
     }
+}
+
+private Boolean hasChildDevices() {
+    return !!(getChildDevices() ?: [])
+}
+
+private String calloutHtml(String message) {
+    return "<div style=\"padding:10px 12px;border-left:4px solid #f0ad4e;background:#fdf7ec;color:#202124;\">${message}</div>"
+}
+
+private String successCalloutHtml(String message) {
+    return "<div style=\"padding:10px 12px;border-left:4px solid #5cb85c;background:#f1f8f1;color:#202124;\">${message}</div>"
+}
+
+private String urgentCalloutHtml(String message) {
+    return "<div style=\"padding:12px 14px;border-left:5px solid #d9534f;background:#fdf0ef;color:#202124;font-size:1.05em;\">${message}</div>"
+}
+
+// True once Hubitat has actually installed this app instance, which only happens
+// when Done is clicked. Installs predating this flag have already polled.
+private Boolean setupSaved() {
+    if (state.setupCompleted) {
+        return true
+    }
+
+    if (state.lastPollAt) {
+        state.setupCompleted = true
+        return true
+    }
+
+    return false
+}
+
+private String childDeviceStatusHtml(List selectedDnis) {
+    List missing = selectedDnis.findAll { !getChildDevice(it as String) }
+
+    if (!missing) {
+        return successCalloutHtml("All ${selectedDnis.size()} selected device(s) exist in Hubitat.")
+    }
+
+    return calloutHtml("<b>${missing.size()} of ${selectedDnis.size()} selected device(s) have not been created in Hubitat yet.</b> " +
+        "Click <b>Create/update selected supported devices</b> below.")
+}
+
+private String selectionSummaryHtml(Map discovery, List selectedDnis) {
+    if (!selectedDnis) {
+        return calloutHtml("<b>No devices are selected yet.</b> Use <b>Select Netatmo devices</b> above and choose the " +
+            "${discovery.size()} discovered device(s) you want in Hubitat. Nothing is created until you select at least one.")
+    }
+
+    List names = selectedDnis.collect { dni ->
+        Map device = discovery[dni] instanceof Map ? (Map)discovery[dni] : null
+        device ? (device.displayName as String) : (dni as String)
+    }
+
+    return "<div style=\"padding:10px 12px;border-left:4px solid #5cb85c;background:#f1f8f1;color:#202124;\">" +
+        "<b>${selectedDnis.size()} device(s) selected:</b> ${names.join(', ')}</div>"
 }
 
 def appButtonHandler(String buttonName) {
@@ -267,6 +348,11 @@ def appButtonHandler(String buttonName) {
 
     if (buttonName == "runPollNow") {
         poll()
+        return
+    }
+
+    if (buttonName == "reschedulePolling") {
+        reschedulePolling("Manual reschedule requested from the app page.")
         return
     }
 
@@ -308,13 +394,13 @@ String discoveryStatusText() {
 
 String supportedDeviceSyncStatusText() {
     if (state.lastSupportedDeviceSyncStatus) {
-        String timestamp = state.lastSupportedDeviceSyncAt ? " Last run ${formatTimestamp(state.lastSupportedDeviceSyncAt)}." : ""
-        return "${state.lastSupportedDeviceSyncStatus}${timestamp}"
+        String timestamp = state.lastSupportedDeviceSyncAt ? " on ${formatTimestamp(state.lastSupportedDeviceSyncAt)}" : ""
+        return "Most recent sync${timestamp}: ${state.lastSupportedDeviceSyncStatus}"
     }
 
     if (state.lastBaseStationSyncStatus) {
-        String timestamp = state.lastBaseStationSyncAt ? " Last run ${formatTimestamp(state.lastBaseStationSyncAt)}." : ""
-        return "${state.lastBaseStationSyncStatus}${timestamp}"
+        String timestamp = state.lastBaseStationSyncAt ? " on ${formatTimestamp(state.lastBaseStationSyncAt)}" : ""
+        return "Most recent sync${timestamp}: ${state.lastBaseStationSyncStatus}"
     }
 
     return "No supported child device sync has been run yet."
@@ -326,11 +412,25 @@ String pollStatusText() {
     if (state.lastPollStatus) {
         String timestamp = state.lastPollAt ? " Last poll ${formatTimestamp(state.lastPollAt)}." : ""
         String scheduled = !state.lastPollAt && state.pollScheduledAt ? " Scheduled ${formatTimestamp(state.pollScheduledAt)}." : ""
+        String rescheduled = state.pollRescheduledAt ? " Last rescheduled ${formatTimestamp(state.pollRescheduledAt)}." : ""
         String message = state.lastPollMessage ? " ${state.lastPollMessage}" : ""
-        return "${configured} Last status: ${state.lastPollStatus}.${message}${timestamp}${scheduled}"
+        return "${configured} Last status: ${state.lastPollStatus}.${message}${timestamp}${scheduled}${rescheduled}"
     }
 
     return interval == "Disabled" ? configured : "${configured} Waiting for Hubitat to schedule the first poll. Click Done after changing the interval."
+}
+
+String pollHealthWarningText() {
+    if (pollingDisabled() || state.netatmoAuthenticated != true || !selectedDeviceDniList()) {
+        return ""
+    }
+
+    Long staleSince = pollingStaleSince()
+    if (!staleSince) {
+        return ""
+    }
+
+    return "Warning: scheduled polling appears stale. Last expected activity was ${formatTimestamp(staleSince)}. Click Run poll now to test the data path, or Reschedule polling to refresh the Hubitat schedule."
 }
 
 Map pollIntervalOptions() {
@@ -378,7 +478,10 @@ def oauthCallback() {
     if (params.error) {
         log.error "Netatmo authorization failed: ${params.error} ${params.error_description ?: ''}"
         state.netatmoAuthenticated = false
-        return renderCallbackPage("Netatmo authorization failed", "Netatmo returned: ${params.error}")
+        return renderCallbackPage(
+            "Netatmo authorization failed",
+            "Netatmo returned: ${params.error}",
+            callbackRemediationText(params.error as String))
     }
 
     if (!params.code) {
@@ -395,9 +498,13 @@ def oauthCallback() {
 
     if (exchangeCodeForTokens(params.code as String)) {
         state.netatmoAuthenticated = true
-        state.lastDiagnosticStatus = "Authentication completed. Run the getstationsdata diagnostic from the app page."
+        state.lastDiagnosticStatus = "Authorization complete. Testing the Netatmo connection..."
+        state.lastDiscoveryStatus = "Authorization complete. Looking for your Netatmo devices..."
+        runIn(2, "runPostAuthorizationSetup")
         log.info "Netatmo authorization completed successfully"
-        return renderCallbackPage("Netatmo authorization succeeded", "Authorization is complete.")
+        return renderCallbackPage(
+            "Netatmo authorization succeeded",
+            "Authorization is complete. Hubitat is testing the connection and looking for your Netatmo devices now.")
     }
 
     state.netatmoAuthenticated = false
@@ -576,18 +683,23 @@ void clearAuthState() {
     state.netatmoAuthenticated = false
 }
 
+void runPostAuthorizationSetup() {
+    runStationsDataDiagnostic()
+    runStationDiscovery()
+}
+
 void runStationsDataDiagnostic() {
     Map result = apiRequest("GET", "/api/getstationsdata")
 
     if (!result.success) {
-        String message = "getstationsdata failed${result.status ? ' with HTTP ' + result.status : ''}: ${result.error ?: 'unknown error'}"
+        String message = "Netatmo connection test failed${result.status ? ' with HTTP ' + result.status : ''}: ${result.error ?: 'unknown error'}"
         state.lastDiagnosticStatus = message
         log.error "Netatmo diagnostic ${message}"
         return
     }
 
     Map summary = summarizeStationsData(result.data)
-    state.lastDiagnosticStatus = "getstationsdata succeeded: ${summary.stationCount} station(s), ${summary.moduleCount} module(s)."
+    state.lastDiagnosticStatus = "Netatmo connection OK: ${summary.stationCount} station(s), ${summary.moduleCount} module(s) visible."
     log.info "Netatmo diagnostic succeeded: ${summary.stationCount} station(s), ${summary.moduleCount} module(s)"
     debugLog "Netatmo diagnostic summary: ${summary}"
 }
@@ -653,11 +765,23 @@ void syncSelectedSupportedDevices() {
     Map summary = createSelectedSupportedChildren(normalized)
     Integer updated = updateSelectedSupportedDevices(normalized)
     state.lastSupportedDeviceSyncAt = now()
-    state.lastSupportedDeviceSyncStatus = "Supported device sync complete: ${summary.created} created, ${summary.existing} already existed, ${updated} updated."
+    state.lastSupportedDeviceSyncStatus = "${summary.created} created, ${summary.existing} already existed, ${updated} updated."
     log.info "Netatmo supported device sync complete: ${summary.created} created, ${summary.existing} existing, ${updated} updated"
 }
 
 void poll() {
+    try {
+        pollInternal()
+    } catch (Exception e) {
+        state.lastPollAt = now()
+        state.lastPollStatus = "Error"
+        state.lastPollMessage = "Unexpected polling failure: ${exceptionSummary(e)}"
+        log.error "Netatmo poll failed unexpectedly: ${exceptionSummary(e)}"
+        debugLog "Netatmo poll exception details: ${e}"
+    }
+}
+
+private void pollInternal() {
     if (state.netatmoAuthenticated != true) {
         state.lastPollAt = now()
         state.lastPollStatus = "Skipped"
@@ -945,6 +1069,7 @@ private Map normalizeDeviceEntry(Map source, String stationId, String moduleId, 
         displayName: displayNameForDevice(stationName, moduleName, deviceClass),
         reachable: reachableFromSource(source),
         lastSeen: lastSeenFromSource(source),
+        lastMessage: lastMessageFromSource(source),
         measurementTime: measurementTimeFromSource(source),
         units: currentUnitLabels(),
         dashboard: normalizeDashboard(source.dashboard_data instanceof Map ? (Map)source.dashboard_data : [:]),
@@ -961,8 +1086,12 @@ private Map normalizeDashboard(Map dashboard) {
         maxTemperatureTime: safeEpochSecondsAsString(dashboard.date_max_temp),
         humidity: numberValue(dashboard.Humidity),
         pressure: convertPressure(numberValue(dashboard.Pressure)),
+        absolutePressure: convertPressure(numberValue(dashboard.AbsolutePressure)),
         co2: numberValue(dashboard.CO2),
         noise: numberValue(dashboard.Noise),
+        soundPressureLevel: numberValue(dashboard.Noise),
+        healthIndex: numberValue(dashboard.health_idx),
+        healthStatus: healthStatusFromIndex(numberValue(dashboard.health_idx)),
         rain: convertRain(numberValue(dashboard.Rain)),
         rainLastHour: convertRain(numberValue(dashboard.sum_rain_1)),
         rainToday: convertRain(numberValue(dashboard.sum_rain_24)),
@@ -984,8 +1113,14 @@ private Map normalizeDashboard(Map dashboard) {
 private Map normalizeMetadata(Map source) {
     return [
         batteryPercent: numberValue(source.battery_percent),
+        batteryVp: numberValue(source.battery_vp),
         rfStatus: numberValue(source.rf_status),
-        wifiStatus: numberValue(source.wifi_status)
+        wifiStatus: numberValue(source.wifi_status),
+        firmware: numberValue(source.firmware),
+        dataTypes: dataTypesFromSource(source),
+        placeCity: placeStringFromSource(source, "city"),
+        placeAltitude: placeNumberFromSource(source, "altitude"),
+        placeTimezone: placeStringFromSource(source, "timezone")
     ]
 }
 
@@ -1229,11 +1364,15 @@ private Map diagnosticForRawDevice(Map rawDevice, Map normalized, String station
         reachable: normalizedDevice.reachable,
         lastSeen: normalizedDevice.lastSeen,
         measurementTime: normalizedDevice.measurementTime,
+        lastMessage: normalizedDevice.lastMessage,
         units: units,
+        rawDeviceKeys: rawDevice.keySet().collect { it as String }.sort(),
+        rawMetadataValues: diagnosticRawMetadataValues(rawDevice),
         rawDashboardKeys: rawDashboard.keySet().collect { it as String }.sort(),
         normalizedDashboardPresent: presentKeys(dashboard),
         normalizedDashboardValues: diagnosticDashboardValues(dashboard, units),
         normalizedMetadataPresent: presentKeys(metadata),
+        normalizedMetadataValues: diagnosticMetadataValues(metadata),
         expectedDashboardFields: expected.dashboard,
         expectedMetadataFields: expected.metadata,
         missingDashboardFields: missingKeys(dashboard, expected.dashboard),
@@ -1244,15 +1383,15 @@ private Map diagnosticForRawDevice(Map rawDevice, Map normalized, String station
 private Map expectedFieldsForDeviceClass(String deviceClass) {
     switch (deviceClass) {
         case "base":
-            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "pressure", "co2", "noise", "tempTrend", "pressureTrend"], metadata: ["wifiStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "pressure", "absolutePressure", "co2", "noise", "soundPressureLevel", "tempTrend", "pressureTrend"], metadata: ["wifiStatus", "firmware"]]
         case "outdoor":
-            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "tempTrend"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         case "indoor":
-            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "co2", "tempTrend"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["temperature", "minTemperature", "maxTemperature", "minTemperatureTime", "maxTemperatureTime", "humidity", "co2", "tempTrend"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         case "rain":
-            return [dashboard: ["rain", "rainLastHour", "rainToday"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["rain", "rainLastHour", "rainToday"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         case "wind":
-            return [dashboard: ["windStrength", "windAngle", "windDirection", "gustStrength", "gustAngle", "gustDirection", "maxWindStrength", "maxWindAngle", "maxWindDirection", "dateMaxWindStrength"], metadata: ["batteryPercent", "rfStatus"]]
+            return [dashboard: ["windStrength", "windAngle", "windDirection", "gustStrength", "gustAngle", "gustDirection", "maxWindStrength", "maxWindAngle", "maxWindDirection", "dateMaxWindStrength"], metadata: ["batteryPercent", "rfStatus", "firmware"]]
         default:
             return [dashboard: [], metadata: []]
     }
@@ -1269,6 +1408,7 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
         minTemperature: units.temperature,
         maxTemperature: units.temperature,
         pressure: units.pressure,
+        absolutePressure: units.pressure,
         rain: units.rain,
         rainLastHour: units.rain,
         rainToday: units.rain,
@@ -1278,6 +1418,7 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
         humidity: "%",
         co2: "ppm",
         noise: "dB",
+        soundPressureLevel: "dB",
         windAngle: "degrees",
         gustAngle: "degrees",
         maxWindAngle: "degrees"
@@ -1286,6 +1427,38 @@ private List diagnosticDashboardValues(Map dashboard, Map units) {
     (dashboard ?: [:]).findAll { key, value -> value != null }.keySet().collect { it as String }.sort().each { key ->
         String unit = unitByField[key]
         values << "${key}=${dashboard[key]}${unit ? ' ' + unit : ''}"
+    }
+    return values
+}
+
+private List diagnosticMetadataValues(Map metadata) {
+    List values = []
+    Map unitByField = [
+        batteryPercent: "%",
+        placeAltitude: "m"
+    ]
+
+    (metadata ?: [:]).findAll { key, value -> value != null }.keySet().collect { it as String }.sort().each { key ->
+        String unit = unitByField[key]
+        values << "${key}=${metadata[key]}${unit ? ' ' + unit : ''}"
+    }
+    return values
+}
+
+private List diagnosticRawMetadataValues(Map rawDevice) {
+    List keys = ["battery_percent", "battery_vp", "rf_status", "wifi_status", "firmware", "last_message", "last_seen", "reachable", "data_type"]
+    List values = []
+    keys.each { key ->
+        if (rawDevice?.containsKey(key) && rawDevice[key] != null) {
+            values << "${key}=${rawDevice[key]}"
+        }
+    }
+
+    Map place = rawDevice?.place instanceof Map ? (Map)rawDevice.place : [:]
+    ["city", "altitude", "timezone"].each { key ->
+        if (place.containsKey(key) && place[key] != null) {
+            values << "place.${key}=${place[key]}"
+        }
     }
     return values
 }
@@ -1330,18 +1503,22 @@ private String fieldDiagnosticDisplayHtml(Map diagnostic) {
     String generated = diagnostic.generatedAt ? formatTimestamp(diagnostic.generatedAt) : "unknown"
     String html = "<p><strong>Available field diagnostic</strong><br>Generated: ${escapeHtml(generated)}</p>"
     html += "<p>Active unit preferences: ${escapeHtml(valueText(diagnostic.unitPreferences))}</p>"
-    html += "<p>lastSeen is module communication time. measurementTime is the timestamp of the latest dashboard reading.</p>"
+    html += "<p>lastSeen and lastMessage are module communication timestamps. measurementTime is the timestamp of the latest dashboard reading. Base stations may not provide lastSeen or lastMessage.</p>"
     devices.sort { a, b -> (a.displayName ?: "") <=> (b.displayName ?: "") }.each { device ->
         html += "<p><strong>${escapeHtml(device.displayName as String)}</strong><br>"
         html += "DNI: <code>${escapeHtml(device.dni as String)}</code><br>"
         html += "Type/Class: ${escapeHtml(device.moduleType as String)} / ${escapeHtml(device.deviceClass as String)}<br>"
         html += "Reachable: ${escapeHtml(valueText(device.reachable))}<br>"
-        html += "Last seen: ${escapeHtml(formatEpochSecondsForDisplay(device.lastSeen))}<br>"
+        html += "Last seen: ${escapeHtml(formatDiagnosticEpochSeconds(device, 'lastSeen'))}<br>"
+        html += "Last message: ${escapeHtml(formatDiagnosticEpochSeconds(device, 'lastMessage'))}<br>"
         html += "Measurement time: ${escapeHtml(valueText(device.measurementTime))}<br>"
+        html += "Raw device keys: ${escapeHtml(listText(device.rawDeviceKeys))}<br>"
+        html += "Raw metadata values: ${escapeHtml(listText(device.rawMetadataValues))}<br>"
         html += "Raw dashboard_data keys: ${escapeHtml(listText(device.rawDashboardKeys))}<br>"
         html += "Normalized dashboard values present: ${escapeHtml(listText(device.normalizedDashboardPresent))}<br>"
         html += "Normalized dashboard values: ${escapeHtml(listText(device.normalizedDashboardValues))}<br>"
         html += "Normalized metadata values present: ${escapeHtml(listText(device.normalizedMetadataPresent))}<br>"
+        html += "Normalized metadata values: ${escapeHtml(listText(device.normalizedMetadataValues))}<br>"
         html += "Expected dashboard fields: ${escapeHtml(listText(device.expectedDashboardFields))}<br>"
         html += "Expected metadata fields: ${escapeHtml(listText(device.expectedMetadataFields))}<br>"
         html += "Missing/null dashboard fields: ${escapeHtml(listText(device.missingDashboardFields))}<br>"
@@ -1372,6 +1549,15 @@ private String formatEpochSecondsForDisplay(Object value) {
     } catch (Exception e) {
         return value as String
     }
+}
+
+private String formatDiagnosticEpochSeconds(Map device, String key) {
+    Object value = device ? device[key] : null
+    if (value == null && device?.deviceClass == "base" && (key == "lastSeen" || key == "lastMessage")) {
+        return "Not provided"
+    }
+
+    return formatEpochSecondsForDisplay(value)
 }
 
 private List selectedDeviceDniList() {
@@ -1521,6 +1707,7 @@ private void schedulePolling() {
     String interval = settings.pollIntervalMinutes ?: "5"
     if (interval == "Disabled") {
         state.remove("pollScheduledAt")
+        state.remove("pollRescheduledAt")
         state.lastPollStatus = state.lastPollStatus ?: "Disabled"
         state.lastPollMessage = "Scheduled polling is disabled."
         debugLog "Netatmo scheduled polling disabled"
@@ -1547,6 +1734,7 @@ private void schedulePolling() {
             default:
                 log.warn "Unsupported Netatmo poll interval ${interval}; scheduled polling disabled"
                 state.remove("pollScheduledAt")
+                state.remove("pollRescheduledAt")
                 state.lastPollStatus = "Disabled"
                 state.lastPollMessage = "Unsupported poll interval ${interval}."
                 return
@@ -1561,8 +1749,91 @@ private void schedulePolling() {
         log.error "Failed to schedule Netatmo polling: ${exceptionSummary(e)}"
         debugLog "Netatmo polling schedule exception details: ${e}"
         state.remove("pollScheduledAt")
+        state.remove("pollRescheduledAt")
         state.lastPollStatus = "Error"
         state.lastPollMessage = "Failed to schedule polling."
+    }
+}
+
+private void reschedulePolling(String reason = null) {
+    try {
+        unschedule("poll")
+    } catch (Exception e) {
+        log.warn "Could not clear existing Netatmo poll schedule before rescheduling: ${exceptionSummary(e)}"
+        debugLog "Netatmo unschedule poll exception details: ${e}"
+    }
+
+    schedulePolling()
+
+    if (!pollingDisabled()) {
+        state.pollRescheduledAt = now()
+        state.lastPollStatus = "Scheduled"
+        state.lastPollMessage = reason ?: "Polling schedule refreshed. Waiting for next scheduled run."
+        log.info "Netatmo polling schedule refreshed${reason ? ': ' + reason : ''}"
+    }
+}
+
+private void repairStalePollingIfNeeded() {
+    if (pollingDisabled() || state.netatmoAuthenticated != true || !selectedDeviceDniList()) {
+        return
+    }
+
+    Long staleSince = pollingStaleSince()
+    if (!staleSince) {
+        return
+    }
+
+    Long lastRepair = state.pollRescheduledAt instanceof Number ? (state.pollRescheduledAt as Long) : null
+    Long threshold = pollStaleThresholdMs()
+    if (lastRepair && (now() - lastRepair) < threshold) {
+        return
+    }
+
+    reschedulePolling("Polling schedule was refreshed because the last expected poll appeared stale.")
+}
+
+private Boolean pollingDisabled() {
+    return (settings.pollIntervalMinutes ?: "5") == "Disabled"
+}
+
+private Long pollingStaleSince() {
+    Long threshold = pollStaleThresholdMs()
+    if (threshold == null) {
+        return null
+    }
+
+    Long lastPoll = state.lastPollAt instanceof Number ? (state.lastPollAt as Long) : null
+    Long scheduledAt = state.pollScheduledAt instanceof Number ? (state.pollScheduledAt as Long) : null
+    Long rescheduledAt = state.pollRescheduledAt instanceof Number ? (state.pollRescheduledAt as Long) : null
+    Long reference = [lastPoll, scheduledAt, rescheduledAt].findAll { it != null }.max()
+    if (!reference) {
+        return now()
+    }
+
+    return (now() - reference) > threshold ? reference : null
+}
+
+private Long pollStaleThresholdMs() {
+    Integer minutes = pollIntervalMinutesAsInteger()
+    if (minutes == null) {
+        return null
+    }
+
+    Integer thresholdMinutes = (minutes * 2) + 5
+    return thresholdMinutes * 60L * 1000L
+}
+
+private Integer pollIntervalMinutesAsInteger() {
+    String interval = settings.pollIntervalMinutes ?: "5"
+    if (interval == "Disabled") {
+        return null
+    }
+
+    try {
+        return interval as Integer
+    } catch (Exception e) {
+        debugLog "Could not parse Netatmo poll interval ${interval}: ${exceptionSummary(e)}"
+        return null
     }
 }
 
@@ -1632,9 +1903,55 @@ private Long lastSeenFromSource(Map source) {
     return safeLong(source.last_seen)
 }
 
+private Long lastMessageFromSource(Map source) {
+    return safeLong(source.last_message)
+}
+
 private String measurementTimeFromSource(Map source) {
     Map dashboard = source.dashboard_data instanceof Map ? (Map)source.dashboard_data : [:]
     return safeEpochSecondsAsString(dashboard.time_utc)
+}
+
+private String healthStatusFromIndex(BigDecimal healthIndex) {
+    if (healthIndex == null) {
+        return null
+    }
+
+    switch (healthIndex as Integer) {
+        case 0:
+            return "healthy"
+        case 1:
+            return "fine"
+        case 2:
+            return "fair"
+        case 3:
+            return "poor"
+        case 4:
+            return "unhealthy"
+        default:
+            return "unknown"
+    }
+}
+
+private List dataTypesFromSource(Map source) {
+    if (!(source?.data_type instanceof List)) {
+        return null
+    }
+
+    List values = ((List)source.data_type).collect { stringValue(it) }.findAll { it != null }
+    return values ?: null
+}
+
+private Map placeFromSource(Map source) {
+    return source?.place instanceof Map ? (Map)source.place : [:]
+}
+
+private String placeStringFromSource(Map source, String key) {
+    return stringValue(placeFromSource(source)[key])
+}
+
+private BigDecimal placeNumberFromSource(Map source, String key) {
+    return numberValue(placeFromSource(source)[key])
 }
 
 private String buildApiUrl(String path) {
@@ -1765,7 +2082,29 @@ private Map safeCallbackParams(Map callbackParams) {
     ]
 }
 
-private renderCallbackPage(String title, String message) {
+private String callbackRemediationText(String errorCode) {
+    if (errorCode == "redirect_uri_mismatch") {
+        return "Your Netatmo application has a Redirect URI saved that does not match this hub. " +
+            "Sign in at https://dev.netatmo.com/apps/, open the application whose Client ID you entered in Hubitat, " +
+            "clear the Redirect URI field, and save. Then return to Hubitat and click Authorize Netatmo again. " +
+            "This integration does not need a Redirect URI. " +
+            "If that same Netatmo application is already in use on another Hubitat hub, create a separate Netatmo application for this hub instead."
+    }
+
+    if (errorCode == "invalid_client") {
+        return "Netatmo did not recognize the Client ID or Client Secret. Recopy both from your application at " +
+            "https://dev.netatmo.com/apps/ and paste them into Hubitat again, making sure no extra spaces are included."
+    }
+
+    if (errorCode == "access_denied") {
+        return "The authorization request was declined. Click Authorize Netatmo again and choose YES, I ACCEPT."
+    }
+
+    return ""
+}
+
+private renderCallbackPage(String title, String message, String remediation = "") {
+    String remediationHtml = remediation ? "    <p><strong>How to fix this:</strong> ${escapeHtml(remediation)}</p>\n" : ""
     def html = """
 <!DOCTYPE html>
 <html>
@@ -1781,8 +2120,7 @@ private renderCallbackPage(String title, String message) {
   <main class="panel">
     <h2>${escapeHtml(title)}</h2>
     <p>${escapeHtml(message)}</p>
-    <p>Close this tab, then return to the Netatmo Weather Station Connect app in Hubitat.</p>
-    <p>Refresh the Netatmo Weather Station Connect app page to see the latest authorization status.</p>
+${remediationHtml}    <p>Close this tab, then return to the Netatmo Weather Station Connect integration page in Hubitat and refresh it to see the latest authorization status.</p>
   </main>
 </body>
 </html>

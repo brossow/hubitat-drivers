@@ -2,11 +2,12 @@
   "packageName": "Rheem EcoNet",
   "minimumHEVersion": "2.2.8",
   "author": "brossow",
-  "version": "0.1.2",
-  "dateReleased": "2026-04-17",
-  "releaseNotes": "Fix fan mode control on devices that expose @FANSPEED but not @FANMODE.",
+  "version": "0.3.3",
+  "dateReleased": "2026-10-01",
+  "releaseNotes": "Small fixes. Refresh now respects the login backoff, so a rule that refreshes on a timer can't keep retrying a wrong password against your Rheem account (Save Preferences still retries at once). A unit that drops offline shows online: false with one warning, instead of a 'no unit has this serial' error on every poll, and recovers by itself. A serial number that exactly matches a unit is always selected, even if it also appears inside another unit's id (zoned systems). Thermostat: an unrecognized mode no longer reports as off, units with a separate fan-mode setting no longer flip back to auto after Fan On, and 'medium' works on units that only have Med.Lo and Med.Hi. Water heater (not yet tested on hardware): cool() no longer throws an error, and vacation mode reports the switch as off, matching thermostatMode.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/rheem-econet",
   "communityLink": "https://community.hubitat.com/t/drivers-rheem-econet-thermostat-water-heater/163127",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/rheem-econet/LICENSE",
   "apps": [],
   "drivers": [
     {

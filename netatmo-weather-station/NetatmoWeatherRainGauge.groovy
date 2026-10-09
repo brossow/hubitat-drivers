@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Rain Gauge - Hubitat Driver
- * Version: 0.2.0
+ * Version: 0.3.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -23,9 +23,13 @@ metadata {
         attribute "rainLastHour", "number"
         attribute "rainToday", "number"
         attribute "rfStatus", "number"
+        attribute "batteryVp", "number"
         attribute "reachable", "string"
         attribute "lastSeen", "string"
+        attribute "lastMessage", "string"
         attribute "measurementTime", "string"
+        attribute "firmware", "number"
+        attribute "dataTypes", "string"
         attribute "stationName", "string"
         attribute "moduleName", "string"
         attribute "lastUpdated", "string"
@@ -67,12 +71,17 @@ def updatedFromParent(Map data) {
     sendEventIfPresent("rainToday", dashboard.rainToday, units.rain ?: "mm")
     sendEventIfPresent("battery", metadata.batteryPercent, "%")
     sendEventIfPresent("rfStatus", metadata.rfStatus)
+    sendEventIfPresent("batteryVp", metadata.batteryVp)
+    sendEventIfPresent("firmware", metadata.firmware)
+    sendEventIfPresent("dataTypes", joinListValue(metadata.dataTypes))
     sendEventIfPresent("reachable", data.reachable == null ? null : data.reachable.toString())
     sendEventIfPresent("stationName", data.stationName)
     sendEventIfPresent("moduleName", data.moduleName)
 
     String lastSeenValue = formatEpochSeconds(data.lastSeen)
     sendEventIfPresent("lastSeen", lastSeenValue)
+    String lastMessageValue = formatEpochSeconds(data.lastMessage)
+    sendEventIfPresent("lastMessage", lastMessageValue)
     sendEventIfPresent("measurementTime", data.measurementTime)
     sendEvent(name: "lastUpdated", value: formatNow())
 }
@@ -87,6 +96,16 @@ private void sendEventIfPresent(String name, Object value, String unit = null) {
         event.unit = unit
     }
     sendEvent(event)
+}
+
+private String joinListValue(Object value) {
+    if (value == null) {
+        return null
+    }
+    if (value instanceof List) {
+        return value.collect { it as String }.join(", ")
+    }
+    return value as String
 }
 
 private String formatEpochSeconds(Object value) {

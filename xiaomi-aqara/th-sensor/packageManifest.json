@@ -6,7 +6,7 @@
   "dateReleased": "2026-10-08",
   "releaseNotes": "Breaking change: the sensor is no longer a presence sensor. Device health is now reported by the healthStatus attribute (online or offline) using the same 3-hour check, so thermometers no longer appear in presence pickers. Rules that used these sensors presence must switch to healthStatus. notPresentCounter is renamed offlineCounter, and the presence preferences are renamed with your settings kept. After updating, click Save Preferences on each device to remove the old presence attributes.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara/th-sensor",
-  "communityLink": "",
+  "communityLink": "https://community.hubitat.com/t/release-xiaomi-aqara-temperature-humidity-sensor-maintained-fork-of-the-oh-lalabs-driver-v2-0-0/166693",
   "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/th-sensor/LICENSE",
   "apps": [],
   "drivers": [

@@ -27,4 +27,4 @@ Tags follow the format `{driver}/v{version}` — for example, `birdweather/v1.2.
 
 ## Checks
 
-`tools/check-syntax.sh` parses every driver with Groovy 2.4, the version the hub runs, and GitHub Actions runs it on every push that touches a `.groovy` file. It needs only Java 8 or later. It catches files that wouldn't save on the hub, not runtime bugs. Bambu Lab Printer, Rheem EcoNet and the Xiaomi/Aqara T&H driver also have off-hub tests (`tests/run.sh` in their folders) that check behaviour.
+`tools/check-syntax.sh` parses every driver with Groovy 2.4, the version the hub runs, and GitHub Actions runs it on every push that touches a `.groovy` file. It needs only Java 8 or later. It catches files that wouldn't save on the hub, not runtime bugs. Bambu Lab Printer, Netatmo Weather Station, Rheem EcoNet and the Xiaomi/Aqara T&H driver also have off-hub tests (`tests/run.sh` in their folders) that check behaviour.

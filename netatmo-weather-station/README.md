@@ -177,6 +177,8 @@ Outdoor and additional indoor modules expose their measurement values, RF status
 
 Rain and wind gauges expose their measurement values, RF status, battery percentage, battery voltage, firmware, data types, and timestamps where Netatmo provides them. Rain and wind values depend on what Netatmo returns for active and reachable modules.
 
+Every device also reports `healthStatus`: `online` while Netatmo says the device is reachable, `offline` when it isn't. This is the attribute Hubitat uses for whether a device is reachable, so tools that watch device health pick it up, and you can trigger a rule on a module going `offline` (a flat battery, or a module out of radio range).
+
 The base station uses Hubitat's standard `SoundPressureLevel` capability for Netatmo's numeric `Noise` value. It does not create a threshold-based sound detected/not detected event.
 
 ## Diagnostics
@@ -278,7 +280,7 @@ Check that you clicked **Done** at the bottom right of the settings page. Until 
 
 ### Stale or Unreachable Modules
 
-- Check `reachable`, `lastSeen`, `lastMessage`, and `measurementTime`.
+- Check `healthStatus` (or `reachable`), `lastSeen`, `lastMessage`, and `measurementTime`.
 - `lastSeen` may show the last module communication time even when current dashboard values are absent.
 - `measurementTime` is present only when Netatmo returns a dashboard reading timestamp.
 
@@ -289,9 +291,19 @@ Check that you clicked **Done** at the bottom right of the settings page. Until 
 
 ### Token or Authentication Failures
 
-- Reauthorize Netatmo from the parent app.
+- If Netatmo is briefly unreachable when the access token is due for renewal, the integration logs a warning and tries again on the next poll. You don't need to do anything; the integration stays authorized.
+- If Netatmo rejects the renewal, the log says so and asks you to reauthorize, and the integration page shows **Not authenticated**. Click **Reauthorize Netatmo** on the integration page.
 - Confirm the Netatmo developer app still exists and credentials are unchanged.
 - Check Hubitat logs for refresh-token or API errors.
+
+## Tests
+
+```sh
+tests/run.sh               # everything
+tests/run.sh refresh       # only tests whose name contains "refresh"
+```
+
+The off-hub tests load the app and drivers into a small stand-in for the Hubitat sandbox, with Netatmo's token endpoint and API faked so each test chooses how Netatmo answers: success, an outage, a rejected token, or no response at all. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
 
 ## Privacy and Security Notes
 

@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.4.0
+ * Version: 0.5.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -33,7 +33,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.4.0" }
+private String appVersion() { return "0.5.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -549,6 +549,10 @@ Boolean refreshAccessToken() {
         client_secret: settings.clientSecret?.trim()
     ]
 
+    // Only a definite rejection from Netatmo signs the hub out. A timeout, network
+    // error or Netatmo outage leaves the stored tokens alone so the next poll retries;
+    // marking the app unauthenticated here used to stop polling until someone
+    // reauthorized by hand.
     try {
         Boolean tokensStored = false
         httpPost(tokenRequestParams(body)) { resp ->
@@ -562,14 +566,28 @@ Boolean refreshAccessToken() {
             return true
         }
 
-        log.error "Netatmo token refresh failed: token response was missing required fields"
+        log.warn "Netatmo token refresh returned no usable tokens; will retry on the next poll"
     } catch (Exception e) {
-        log.error "Netatmo token refresh failed: ${exceptionSummary(e)}"
+        Integer status = responseStatusFromException(e)
+        if (tokenRefreshRejected(status)) {
+            log.error "Netatmo rejected the token refresh (${exceptionSummary(e)}). Reauthorize Netatmo from the integration page."
+            debugLog "Netatmo token refresh exception details: ${e}"
+            state.netatmoAuthenticated = false
+            return false
+        }
+
+        log.warn "Netatmo token refresh failed temporarily (${exceptionSummary(e)}); will retry on the next poll"
         debugLog "Netatmo token refresh exception details: ${e}"
     }
 
-    state.netatmoAuthenticated = false
     return false
+}
+
+// 400 and 401 from the token endpoint mean the refresh token or client credentials
+// were refused (invalid_grant, invalid_client): only reauthorizing fixes that.
+// Anything else, including no response at all, is treated as temporary.
+private Boolean tokenRefreshRejected(Integer status) {
+    return status == 400 || status == 401
 }
 
 Map apiRequest(String method, String path, Map query = [:], Map body = null) {
@@ -620,13 +638,15 @@ private Map apiRequestInternal(String method, String path, Map query = [:], Map 
         return result
     } catch (Exception e) {
         Integer status = responseStatusFromException(e)
-        if (status == 401 && allowRetry) {
-            log.warn "Netatmo API request returned 401; refreshing token and retrying once"
+        // Netatmo answers an expired or revoked access token with 403 (error codes 2
+        // and 3), not 401, so both refresh the token and retry once.
+        if ((status == 401 || status == 403) && allowRetry) {
+            log.warn "Netatmo API request returned ${status}; refreshing token and retrying once"
             if (refreshAccessToken()) {
                 return apiRequestInternal(method, path, query, body, false)
             }
-            log.error "Netatmo API retry skipped: token refresh after 401 failed"
-            return [success: false, status: 401, data: null, error: "Unauthorized and token refresh failed"]
+            log.error "Netatmo API retry skipped: token refresh after ${status} failed"
+            return [success: false, status: status, data: null, error: "Unauthorized and token refresh failed"]
         }
 
         log.error "Netatmo API ${verb} ${path} failed: ${exceptionSummary(e)}"
@@ -1091,7 +1111,6 @@ private Map normalizeDashboard(Map dashboard) {
         noise: numberValue(dashboard.Noise),
         soundPressureLevel: numberValue(dashboard.Noise),
         healthIndex: numberValue(dashboard.health_idx),
-        healthStatus: healthStatusFromIndex(numberValue(dashboard.health_idx)),
         rain: convertRain(numberValue(dashboard.Rain)),
         rainLastHour: convertRain(numberValue(dashboard.sum_rain_1)),
         rainToday: convertRain(numberValue(dashboard.sum_rain_24)),
@@ -1910,27 +1929,6 @@ private Long lastMessageFromSource(Map source) {
 private String measurementTimeFromSource(Map source) {
     Map dashboard = source.dashboard_data instanceof Map ? (Map)source.dashboard_data : [:]
     return safeEpochSecondsAsString(dashboard.time_utc)
-}
-
-private String healthStatusFromIndex(BigDecimal healthIndex) {
-    if (healthIndex == null) {
-        return null
-    }
-
-    switch (healthIndex as Integer) {
-        case 0:
-            return "healthy"
-        case 1:
-            return "fine"
-        case 2:
-            return "fair"
-        case 3:
-            return "poor"
-        case 4:
-            return "unhealthy"
-        default:
-            return "unknown"
-    }
 }
 
 private List dataTypesFromSource(Map source) {

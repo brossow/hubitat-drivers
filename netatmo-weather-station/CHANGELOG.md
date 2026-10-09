@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0] - 2026-10-09
+
+Fixed:
+
+- **A temporary failure renewing the Netatmo access token stopped polling until you reauthorized.** Netatmo access tokens last a few hours. If renewing one failed for any reason (a network blip, a timeout, a Netatmo outage), the integration marked itself not authenticated, and every later poll was skipped without trying again. Now only a definite rejection from Netatmo signs the hub out; anything temporary is logged as a warning and retried on the next poll.
+- **An expired or revoked access token wasn't renewed and retried.** Netatmo reports these with HTTP 403, but the integration only renewed and retried on 401. Both now renew the token and retry the request once.
+- When Netatmo does reject the token renewal, the log now says so and tells you to reauthorize.
+
+Added:
+
+- `healthStatus` on every device: `online` while Netatmo reports the device reachable, `offline` when it doesn't. This is the attribute Hubitat uses for device health. Previously the base station and modules declared a `healthStatus` attribute meant for Netatmo's air-quality index, a Healthy Home Coach field that weather stations don't report, so it was never set. The rain and wind gauges now have it too.
+- Off-hub tests (`tests/run.sh`), run by GitHub Actions.
+
+
 ## [0.4.0] - 2026-08-12
 
 This release is focused on setup and first-run experience. Existing working

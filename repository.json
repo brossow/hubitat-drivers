@@ -35,7 +35,7 @@
       "tags": ["Cloud", "Climate Control", "Temperature & Humidity", "Water Heater"]
     },
     {
-      "id": "fb617f88-8840-4b3d-a383-de4559c2e837",
+      "id": "fb617f88-8840-4b3d-a873-de4559c2e837",
       "name": "Xiaomi/Aqara Temperature & Humidity Sensor",
       "category": "Temperature & Humidity",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/th-sensor/packageManifest.json",

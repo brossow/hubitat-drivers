@@ -97,6 +97,15 @@ HPM listing coming soon after initial testing.
 - **resetRestoredCounter** — Reset the presence-restore event counter to 0
 - **forceRecoveryMode(minutes)** — Manually trigger recovery polling for N minutes
 
+## Tests
+
+```sh
+tests/run.sh               # everything
+tests/run.sh pressure      # only tests whose name contains "pressure"
+```
+
+The off-hub tests load the driver into a small stand-in for the Hubitat sandbox and check the events it sends. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
+
 ## Changelog
 
 ### v1.2.1 — 2026-10-08

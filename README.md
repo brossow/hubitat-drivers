@@ -29,3 +29,7 @@ Everything in this repo is licensed under the [Apache License 2.0](LICENSE), **e
 ## Releases
 
 Tags follow the format `{driver}/v{version}` — for example, `birdweather/v1.2.0`. Each tag triggers a GitHub Release with the notes from that driver's `packageManifest.json`.
+
+## Checks
+
+`tools/check-syntax.sh` parses every driver with Groovy 2.4, the version the hub runs, and GitHub Actions runs it on every push that touches a `.groovy` file. It needs only Java 8 or later. It catches files that wouldn't save on the hub, not runtime bugs; Rheem EcoNet also has its own off-hub tests.

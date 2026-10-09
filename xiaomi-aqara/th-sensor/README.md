@@ -99,6 +99,13 @@ HPM listing coming soon after initial testing.
 
 ## Changelog
 
+### v1.2.1 — 2026-10-08
+- Fixed pressure never updating after the first reading when displayed in atm — the change threshold was a fixed 0.1 in the displayed unit (about 100 hPa in atm, 3.4 hPa in inHg). It is now 1 hPa in every unit; kPa behaves as before
+- Fixed the temperature and humidity thresholds to match their descriptions: a change of *at least* the threshold is now reported (a change exactly equal to it was skipped)
+- Turning off **Enable Presence** no longer sets the sensor to `not present`, which looked like a departure to any rule watching it
+- Humidity readings outside 0–100% are now dropped with a log warning (they were dropped silently, and below 0% wasn't checked); a humidity offset can no longer push a reading past 0 or 100%
+- Debug logging turns itself off with a single setting update; removed a reference to an undefined constant
+
 ### v1.2.0 — 2026-04-18
 - Added configurable temperature and humidity reporting thresholds (`tempVariance`, `humidityVariance`)
 - Added `batteryVoltage` attribute — now reports raw voltage alongside battery %

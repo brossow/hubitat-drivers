@@ -3,7 +3,7 @@
  *  Copyright 2026 Brent Rossow (modifications)
  *  SPDX-License-Identifier: GPL-3.0-or-later
  *
- *  Version: v1.2.1
+ *  Version: v2.0.0
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -18,9 +18,9 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program. If not, see <https://www.gnu.org/licenses/>.
  *
- *  v1.2.0 — Community fork: https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara/th-sensor
- *  Cleanup, dead-code removal, and improvements by Brent Rossow
+ *  Community fork, modified by Brent Rossow: https://github.com/brossow/hubitat-drivers/tree/main/xiaomi-aqara/th-sensor
  *  Original driver by Markus Liljergren (oh-lalabs.com)
+ *  Changes are listed in the README changelog.
  *
  */
 
@@ -35,7 +35,6 @@ metadata {
         importUrl: "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/xiaomi-aqara/th-sensor/zigbee-xiaomi-aqara-temperature-humidity.groovy"
     ) {
         capability "Sensor"
-        capability "PresenceSensor"
         capability "Initialize"
         capability "Refresh"
 
@@ -47,7 +46,8 @@ metadata {
         attribute "driver", "string"
         attribute "lastCheckin", "Date"
         attribute "lastCheckinEpoch", "number"
-        attribute "notPresentCounter", "number"
+        attribute "healthStatus", "enum", ["unknown", "offline", "online"]
+        attribute "offlineCounter", "number"
         attribute "restoredCounter", "number"
         attribute "batteryLastReplaced", "String"
         attribute "batteryVoltage", "number"
@@ -69,8 +69,8 @@ metadata {
         input(name: "infoLogging", type: "bool", title: titleDiv("Enable info logging"), description: "", defaultValue: true, submitOnChange: true, displayDuringSetup: false, required: false)
         input(name: "lastCheckinEnable", type: "bool", title: titleDiv("Enable Last Checkin Date"), description: descDiv("Records Date events if enabled"), defaultValue: true)
         input(name: "lastCheckinEpochEnable", type: "bool", title: titleDiv("Enable Last Checkin Epoch"), description: descDiv("Records Epoch events if enabled"), defaultValue: false)
-        input(name: "presenceEnable", type: "bool", title: titleDiv("Enable Presence"), description: descDiv("Enables Presence to indicate if the device has sent data within the last 3 hours (REQUIRES at least one of the Checkin options to be enabled)"), defaultValue: true)
-        input(name: "presenceWarningEnable", type: "bool", title: titleDiv("Enable Presence Warning"), description: descDiv("Enables Presence Warnings in the Logs (default: true)"), defaultValue: true)
+        input(name: "healthCheckEnable", type: "bool", title: titleDiv("Enable Health Status"), description: descDiv("Sets healthStatus to offline if the device has sent nothing for 3 hours (REQUIRES at least one of the Checkin options to be enabled)"), defaultValue: (presenceEnable != null ? presenceEnable : true))
+        input(name: "healthWarningEnable", type: "bool", title: titleDiv("Enable Health Warnings"), description: descDiv("Logs a warning when the device goes offline or misses checkins (default: true)"), defaultValue: (presenceWarningEnable != null ? presenceWarningEnable : true))
         input(name: "recoveryMode", type: "enum", title: titleDiv("Recovery Mode"), description: descDiv("Select Recovery mode type (default: Normal)<br/>NOTE: The \"Insane\" and \"Suicidal\" modes may destabilize your mesh if run on more than a few devices at once!"), options: ["Disabled", "Slow", "Normal", "Insane", "Suicidal"], defaultValue: "Normal")
         input(name: "vMinSetting", type: "decimal", title: titleDiv("Battery Minimum Voltage"), description: descDiv("Voltage when battery is considered to be at 0% (default = 2.5V)"), defaultValue: "2.5", range: "2.1..2.8")
         input(name: "vMaxSetting", type: "decimal", title: titleDiv("Battery Maximum Voltage"), description: descDiv("Voltage when battery is considered to be at 100% (default = 3.0V)"), defaultValue: "3.0", range: "2.9..3.4")
@@ -96,7 +96,8 @@ ArrayList<String> refresh() {
     logging("refresh() model='${getDeviceDataByName('model')}'", 10)
 
     getDriverVersion()
-    configurePresence()
+    migrateFromPresence()
+    configureHealthCheck()
     startCheckinMonitor()
     resetBatteryReplacedDate(forced=false)
     scheduleLogsOff(noLogWarning=true)
@@ -313,7 +314,7 @@ void pollDevice() {
 /* ===== DRIVER METADATA ===== */
 
 private String getDriverVersion() {
-    String version = "v1.2.1"
+    String version = "v2.0.0"
     logging("getDriverVersion() = ${version}", 100)
     sendEvent(name: "driver", value: version)
     updateDataValue('driver', version)
@@ -647,7 +648,7 @@ String integerToHexString(Integer value, Integer minBytes, boolean reverse=false
     }
 }
 
-/* ===== PRESENCE & RECOVERY ===== */
+/* ===== HEALTH STATUS & RECOVERY ===== */
 
 Integer maxEventMinutes(BigDecimal forcedMinutes=null) {
     Integer mbe = null
@@ -678,10 +679,10 @@ void recoveryEvent(BigDecimal forcedMinutes=null) {
         sendZigbeeCommands(zigbee.readAttribute(CLUSTER_BASIC, 0x0004))
     }
     try {
-        checkPresence(displayWarnings=false)
+        checkHealth(displayWarnings=false)
         Integer mbe = maxEventMinutes(forcedMinutes=forcedMinutes)
         if(checkinIsRecent(maximumMinutesBetweenEvents=mbe, displayWarnings=false) == true) {
-            if(presenceWarningEnable == null || presenceWarningEnable == true) log.warn("Event interval normal, recovery mode DEACTIVATED!")
+            ifhealthWarningsOn() log.warn("Event interval normal, recovery mode DEACTIVATED!")
             unschedule('recoveryEvent')
             unschedule('reconnectEvent')
         }
@@ -721,7 +722,7 @@ void checkCheckinInterval(boolean displayWarnings=true) {
         try {
             if(checkinIsRecent(maximumMinutesBetweenEvents=mbe) == false) {
                 recoveryMode = recoveryMode == null ? "Normal" : recoveryMode
-                if(displayWarnings == true && (presenceWarningEnable == null || presenceWarningEnable == true)) log.warn("Event interval INCORRECT, recovery mode ($recoveryMode) ACTIVE! If this is shown every hour for the same device and doesn't go away after three times, the device has probably fallen off and require a quick press of the reset button or possibly even re-pairing. It MAY also return within 24 hours, so patience MIGHT pay off.")
+                if(displayWarnings == true && healthWarningsOn()) log.warn("Event interval INCORRECT, recovery mode ($recoveryMode) ACTIVE! If this is shown every hour for the same device and doesn't go away after three times, the device has probably fallen off and require a quick press of the reset button or possibly even re-pairing. It MAY also return within 24 hours, so patience MIGHT pay off.")
                 scheduleRecovery()
             }
         } catch(Exception e) {
@@ -754,7 +755,7 @@ void forceRecoveryMode(BigDecimal minutes) {
         disableForcedRecoveryMode()
     } else if(checkinIsRecent(maximumMinutesBetweenEvents=minutesI) == false) {
         recoveryMode = recoveryMode == null ? "Normal" : recoveryMode
-        if(presenceWarningEnable == null || presenceWarningEnable == true) log.warn("Forced recovery mode ($recoveryMode) ACTIVATED!")
+        ifhealthWarningsOn() log.warn("Forced recovery mode ($recoveryMode) ACTIVATED!")
         state.forcedMinutes = minutes
         runIn(minutesI * 60, 'disableForcedRecoveryMode')
         scheduleRecovery(forcedMinutes=minutes)
@@ -767,7 +768,7 @@ void disableForcedRecoveryMode() {
     state.forcedMinutes = 0
     unschedule('recoveryEvent')
     unschedule('reconnectEvent')
-    if(presenceWarningEnable == null || presenceWarningEnable == true) log.warn("Forced recovery mode DEACTIVATED!")
+    ifhealthWarningsOn() log.warn("Forced recovery mode DEACTIVATED!")
 }
 
 void scheduleLogsOff(boolean noLogWarning=false) {
@@ -821,7 +822,7 @@ boolean sendCheckinEvent(Integer minimumMinutesToRepeat=55) {
             logging("Updated lastCheckinEpoch", 1)
         }
     }
-    if(r == true) markPresent()
+    if(r == true) markOnline()
     return r
 }
 
@@ -850,14 +851,15 @@ Long secondsSinceCheckin() {
 boolean checkinIsRecent(Integer maximumMinutesBetweenEvents=90, boolean displayWarnings=true) {
     Long secondsSinceLastCheckin = secondsSinceCheckin()
     if(secondsSinceLastCheckin != null && secondsSinceLastCheckin > maximumMinutesBetweenEvents * 60) {
-        if(displayWarnings == true && (presenceWarningEnable == null || presenceWarningEnable == true)) log.warn("One or several EXPECTED checkin events have been missed! Something MIGHT be wrong with the mesh for this device. Minutes since last checkin: ${Math.round(secondsSinceLastCheckin / 60)} (maximum expected $maximumMinutesBetweenEvents)")
+        if(displayWarnings == true && healthWarningsOn()) log.warn("One or several EXPECTED checkin events have been missed! Something MIGHT be wrong with the mesh for this device. Minutes since last checkin: ${Math.round(secondsSinceLastCheckin / 60)} (maximum expected $maximumMinutesBetweenEvents)")
         return false
     }
     return true
 }
 
-boolean checkPresence(boolean displayWarnings=true) {
-    boolean isPresent = false
+boolean checkHealth(boolean displayWarnings=true) {
+    if(!healthCheckOn()) return false
+    boolean isOnline = false
     Long lastCheckinTime = null
     String lastCheckinVal = device.currentValue('lastCheckin')
     if ((lastCheckinEnable == true || lastCheckinEnable == null) && isValidDate('yyyy-MM-dd HH:mm:ss', lastCheckinVal) == true) {
@@ -866,30 +868,42 @@ boolean checkPresence(boolean displayWarnings=true) {
         lastCheckinTime = device.currentValue('lastCheckinEpoch').toLong()
     }
     if(lastCheckinTime != null && lastCheckinTime >= now() - (3 * 60 * 60 * 1000)) {
-        markPresent()
-        isPresent = true
+        markOnline()
+        isOnline = true
     } else {
-        sendEvent(name: "presence", value: "not present")
+        sendEvent(name: "healthStatus", value: "offline", descriptionText: "No event from the device for over 3 hours")
         if(displayWarnings == true) {
-            Integer numNotPresent = device.currentValue('notPresentCounter')
-            numNotPresent = numNotPresent == null ? 1 : numNotPresent + 1
-            sendEvent(name: "notPresentCounter", value: numNotPresent)
-            if(presenceWarningEnable == null || presenceWarningEnable == true) {
-                log.warn("No event seen from the device for over 3 hours! Something is not right... (consecutive events: $numNotPresent)")
+            Integer numOffline = device.currentValue('offlineCounter')
+            numOffline = numOffline == null ? 1 : numOffline + 1
+            sendEvent(name: "offlineCounter", value: numOffline)
+            if(healthWarningsOn()) {
+                log.warn("No event seen from the device for over 3 hours! Something is not right... (consecutive checks: $numOffline)")
             }
         }
     }
-    return isPresent
+    return isOnline
 }
 
-void markPresent() {
-    if(device.currentValue('presence') == "not present") {
+void markOnline() {
+    if(!healthCheckOn()) return
+    if(device.currentValue('healthStatus') == "offline") {
         Integer numRestored = device.currentValue('restoredCounter')
         numRestored = numRestored == null ? 1 : numRestored + 1
         sendEvent(name: "restoredCounter", value: numRestored)
-        sendEvent(name: "notPresentCounter", value: 0)
+        sendEvent(name: "offlineCounter", value: 0)
     }
-    sendEvent(name: "presence", value: "present")
+    sendEvent(name: "healthStatus", value: "online")
+}
+
+// The 1.x presence preferences are the fallback until the renamed ones have been saved
+boolean healthCheckOn() {
+    def v = healthCheckEnable != null ? healthCheckEnable : presenceEnable
+    return v == null || v == true
+}
+
+boolean healthWarningsOn() {
+    def v = healthWarningEnable != null ? healthWarningEnable : presenceWarningEnable
+    return v == null || v == true
 }
 
 void resetRestoredCounter() {
@@ -899,21 +913,47 @@ void resetRestoredCounter() {
 
 void initCounters() {
     if(device.currentValue('restoredCounter') == null) sendEvent(name: "restoredCounter", value: 0, descriptionText: "Initialized to 0")
-    if(device.currentValue('notPresentCounter') == null) sendEvent(name: "notPresentCounter", value: 0, descriptionText: "Initialized to 0")
-    if(device.currentValue('presence') == null) sendEvent(name: "presence", value: "unknown", descriptionText: "Initialized as Unknown")
+    if(device.currentValue('offlineCounter') == null) sendEvent(name: "offlineCounter", value: 0, descriptionText: "Initialized to 0")
+    if(healthCheckOn() && device.currentValue('healthStatus') == null) sendEvent(name: "healthStatus", value: "unknown", descriptionText: "Initialized as unknown")
 }
 
-void configurePresence() {
+void configureHealthCheck() {
     initCounters()
-    if(presenceEnable == null || presenceEnable == true) {
+    unschedule('checkPresence')   // 1.x schedule name
+    if(healthCheckOn()) {
         Random rnd = new Random()
-        schedule("${rnd.nextInt(59)} ${rnd.nextInt(59)} 1/3 * * ? *", 'checkPresence')
-        checkPresence(false)
+        schedule("${rnd.nextInt(59)} ${rnd.nextInt(59)} 1/3 * * ? *", 'checkHealth')
+        checkHealth(false)
     } else {
-        // Not "not present": the device is a PresenceSensor, so that would look like a
-        // departure to any rule watching it
-        sendEvent(name: "presence", value: "present", descriptionText: "Presence checking disabled")
-        unschedule('checkPresence')
+        unschedule('checkHealth')
+        deleteState("healthStatus")
+    }
+}
+
+// 2.0.0 replaced the PresenceSensor capability with healthStatus. Carry the user's
+// old choices over to the renamed preferences, and remove the old attributes so a
+// stale presence value doesn't linger on the device page. The old settings are
+// left in place (they're no longer shown) as the fallback in healthCheckOn().
+void migrateFromPresence() {
+    if(presenceEnable != null && healthCheckEnable == null) {
+        device.updateSetting("healthCheckEnable", [value: presenceEnable.toString(), type: "bool"])
+    }
+    if(presenceWarningEnable != null && healthWarningEnable == null) {
+        device.updateSetting("healthWarningEnable", [value: presenceWarningEnable.toString(), type: "bool"])
+    }
+    if(device.currentValue('notPresentCounter') != null && device.currentValue('offlineCounter') == null) {
+        sendEvent(name: "offlineCounter", value: device.currentValue('notPresentCounter'))
+    }
+    deleteState("presence")
+    deleteState("notPresentCounter")
+}
+
+void deleteState(String attribute) {
+    if(device.currentValue(attribute) == null) return
+    try {
+        device.deleteCurrentState(attribute)
+    } catch(Exception e) {
+        logging("Could not delete the old $attribute attribute: ${e.message}", 1)
     }
 }
 

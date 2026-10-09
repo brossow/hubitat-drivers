@@ -110,6 +110,10 @@ The off-hub tests load the driver into a small stand-in for the Hubitat sandbox 
 
 ## Changelog
 
+### v2.0.1 — 2026-10-09
+
+- Quieter logs: raw Zigbee messages (`msgMap`, the hourly check-in data, multistate events) and internal method traces now log only with **Enable debug logging** on. With info logging, you still see readable lines such as temperature, humidity and pressure changes
+
 ### v2.0.0 — 2026-10-08
 
 **Breaking:** the sensor is no longer a presence sensor. Whether it is still reporting is now shown by `healthStatus` (`online` / `offline`), the attribute Hubitat uses for device health. A thermometer no longer appears in presence pickers, so it can't count toward "everyone left" in Mode Manager or a presence rule by mistake.

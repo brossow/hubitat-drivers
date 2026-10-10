@@ -3,7 +3,7 @@
  *  Copyright 2026 Brent Rossow (modifications)
  *  SPDX-License-Identifier: GPL-3.0-or-later
  *
- *  Version: v2.0.1
+ *  Version: v2.0.2
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by

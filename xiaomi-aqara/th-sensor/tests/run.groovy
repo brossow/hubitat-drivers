@@ -237,6 +237,14 @@ test("logsOff turns debug logging off") {
   [d.updatedSettings.debugLogging == [value: "false", type: "bool"], d.updatedSettings]
 }
 
+test("version: header, getDriverVersion and packageManifest.json agree") {
+  def src = driverFile.text
+  def header = (src =~ /Version: v([\d.]+)/)[0][1]
+  def code = (src =~ /String version = "v([\d.]+)"/)[0][1]
+  def manifest = new groovy.json.JsonSlurper().parse(new File(driverFile.parentFile, "packageManifest.json")).version
+  [header == code && code == manifest, "header $header, code $code, manifest $manifest"]
+}
+
 test("recovery waits 90 minutes between events by default") {
   [fresh([:]).maxEventMinutes() == 90, ""]
 }

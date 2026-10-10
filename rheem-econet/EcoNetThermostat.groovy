@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.4.0-beta.1
+ * Version: 0.4.0
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.rheemconnect.com.
@@ -72,7 +72,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants  (@Field = script-level variable, accessible across all methods)
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.4.0-beta.1"
+@Field String DRIVER_VERSION = "0.4.0"
 @Field String LOG_TAG        = "EcoNet"
 @Field String UNIT_NOUN      = "thermostat"
 @Field String UNIT_TITLE     = "Thermostat"

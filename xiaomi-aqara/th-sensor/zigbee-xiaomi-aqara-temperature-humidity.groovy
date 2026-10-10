@@ -948,6 +948,15 @@ void migrateFromPresence() {
     deleteState("notPresentCounter")
 }
 
+// The 1.x health check was scheduled under this name. HPM updates the code
+// without calling updated(), so that schedule keeps firing until the user
+// saves preferences. Run the migration from here so the device switches itself
+// over to checkHealth.
+void checkPresence() {
+    migrateFromPresence()
+    configureHealthCheck()
+}
+
 void deleteState(String attribute) {
     if(device.currentValue(attribute) == null) return
     try {

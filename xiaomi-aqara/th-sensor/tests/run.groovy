@@ -229,6 +229,17 @@ test("upgrade: the 1.x checkPresence schedule is removed") {
   [!d.scheduled.contains('checkPresence'), d.scheduled]
 }
 
+// HPM updates the code without calling updated(), so a 1.x device keeps its
+// 3-hourly checkPresence schedule until Save Preferences. That handler must
+// still exist and move the device onto checkHealth.
+test("upgrade: the 1.x checkPresence schedule still runs and switches itself over") {
+  def d = fresh([:])
+  d.scheduled << 'checkPresence'
+  d.attrs.lastCheckin = hoursAgo(4)
+  d.checkPresence()
+  [!d.scheduled.contains('checkPresence') && d.scheduled.contains('checkHealth') && d.attrs.healthStatus == "offline", [d.scheduled, d.attrs]]
+}
+
 // ── Housekeeping ─────────────────────────────────────────────────────────
 
 test("logsOff turns debug logging off") {

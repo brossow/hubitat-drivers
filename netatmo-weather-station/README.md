@@ -321,3 +321,5 @@ SPDX-License-Identifier: Apache-2.0
 Copyright 2026 Brent Rossow
 
 Netatmo is a trademark of Legrand Netatmo. This project is an independent Hubitat integration and is not affiliated with or endorsed by Netatmo.
+
+<sub>If this driver is useful to you, [donations](https://www.paypal.me/brossow) are welcome but never expected.</sub>

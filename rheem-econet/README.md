@@ -198,3 +198,5 @@ Not all modes are available on every device — `supportedModes` attribute refle
 ## Credits
 
 Inspired by the [Home Assistant EcoNet integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/econet) and the [pyeconet library](https://github.com/w1ll1am23/pyeconet) by [@w1ll1am23](https://github.com/w1ll1am23).
+
+<sub>If this driver is useful to you, [donations](https://www.paypal.me/brossow) are welcome but never expected.</sub>

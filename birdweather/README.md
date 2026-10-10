@@ -149,3 +149,5 @@ The off-hub tests load the driver into a small stand-in for the Hubitat sandbox,
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+<sub>If this driver is useful to you, [donations](https://www.paypal.me/brossow) are welcome but never expected.</sub>

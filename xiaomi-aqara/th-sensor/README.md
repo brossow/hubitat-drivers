@@ -110,6 +110,10 @@ The off-hub tests load the driver into a small stand-in for the Hubitat sandbox 
 
 ## Changelog
 
+### v2.0.2 — 2026-10-09
+
+- Fixed: Recovery Mode switched itself off the first time a sensor came back after missing check-ins, logging "Stopping Recovery feature due to Platform bug!". There was no platform bug; a typo in 2.0.0 broke the "recovery mode DEACTIVATED" warning, and the error it threw turned the feature off. **Force Recovery Mode** hit the same error. If you saw that warning, set **Recovery Mode** back to Normal (or your choice) and click **Save Preferences**
+
 ### v2.0.1 — 2026-10-09
 
 - Quieter logs: raw Zigbee messages (`msgMap`, the hourly check-in data, multistate events) and internal method traces now log only with **Enable debug logging** on. With info logging, you still see readable lines such as temperature, humidity and pressure changes

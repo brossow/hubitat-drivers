@@ -20,7 +20,7 @@ You don't need to use your own station — any public BirdWeather station works.
 
 ### API Token (optional)
 
-The longer API Token shown under Advanced Settings in the BirdWeather app is only needed for **private stations**. Leave it blank for public stations. When it's set, the driver reads the station by its token instead of its ID, which is how the BirdWeather API identifies a private station.
+The longer API Token shown under Advanced Settings in the BirdWeather app is only needed for **private stations**. Leave it blank for public stations. For a private station, enter the Station ID as usual and add the token: the driver then reads the station through the token, which is how the BirdWeather API serves a private station.
 
 ## Attributes
 
@@ -78,7 +78,7 @@ The daily species list resets at midnight in your hub's time zone. The lifetime 
 | Setting | Description |
 |---------|-------------|
 | **Station ID** | Numeric ID from your station's URL at app.birdweather.com |
-| **API Token** | Optional — only needed for private stations; used in place of the Station ID when set |
+| **API Token** | Optional — only needed for private stations; enter it along with the Station ID |
 | **Poll Interval** | How often to check for new detections (1–30 min) |
 | **Recent Detections to Track** | Depth of the `recentDetections` JSON history (3, 5, 10, or 20) |
 | **Minimum Confidence %** | Ignore detections below this threshold (0 = accept all) |
@@ -116,6 +116,11 @@ Add `lastSpecies`, `todaySpecies`, and `todayDetections` as tiles using the Attr
 ![Tile Builder dashboard tile](BirdWeather_TileBuilder_screenshot.png)
 
 See the [community forum post](https://community.hubitat.com/t/release-birdweather-puc-driver/163303) for a complete style example including the variable layout, override CSS, and setup notes.
+
+## Known Limitations
+
+- **Catch-up limit:** after a very long gap (more than about 425 detections since the last poll, e.g. a hub that was off for most of a day), the oldest detections are skipped and a warning is logged.
+- **Certainty filter and lifetime alerts:** with *Fire events only for certainty level ≥* set above `all`, a first-ever species detected below that level is recorded without an alert, and its later high-certainty sightings won't fire one either. BirdWeather's all-time species list doesn't say how certain each sighting was, so there's no way to tell.
 
 ## API Reference
 

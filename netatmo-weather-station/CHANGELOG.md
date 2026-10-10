@@ -11,6 +11,7 @@ Fixed:
 - **A temporary failure renewing the Netatmo access token stopped polling until you reauthorized.** Netatmo access tokens last a few hours. If renewing one failed for any reason (a network blip, a timeout, a Netatmo outage), the integration marked itself not authenticated, and every later poll was skipped without trying again. Now only a definite rejection from Netatmo signs the hub out; anything temporary is logged as a warning and retried on the next poll.
 - **An expired or revoked access token wasn't renewed and retried.** Netatmo reports these with HTTP 403, but the integration only renewed and retried on 401. Both now renew the token and retry the request once.
 - When Netatmo does reject the token renewal, the log now says so and tells you to reauthorize.
+- **Two things happening at once could sign the hub out.** Netatmo's refresh token can be used only once. If two parts of the integration renewed the access token at the same moment (for example a scheduled poll and a rule refreshing several devices), both sent the same refresh token, Netatmo refused the second, and the hub was signed out. An older execution could also save its out-of-date copy of the tokens over newer ones. Tokens are now shared by every part of the integration and saved immediately, and only one renewal runs at a time; anything waiting uses the new token instead of renewing again.
 
 Added:
 

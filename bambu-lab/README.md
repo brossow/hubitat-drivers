@@ -245,3 +245,5 @@ This integration is based in part on the [Bambu Lab 3D Printer driver and app](h
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+<sub>If this driver is useful to you, [donations](https://www.paypal.me/brossow) are welcome but never expected.</sub>

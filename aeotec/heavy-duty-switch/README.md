@@ -110,3 +110,5 @@ The original driver worked but had several bugs that have been corrected:
 ## Attribution
 
 This driver is a fork of [Aeotec Heavy Duty Smart Switch](https://github.com/syepes/Hubitat/tree/master/Drivers/Aeotec) by [Sebastian YEPES](https://github.com/syepes), licensed under the Apache License 2.0. This fork is also Apache-2.0 — see [LICENSE](LICENSE). Original copyright retained per license terms.
+
+<sub>If this maintained fork is useful to you, [donations](https://www.paypal.me/brossow) toward its upkeep are welcome but never expected.</sub>

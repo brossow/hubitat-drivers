@@ -314,7 +314,7 @@ void pollDevice() {
 /* ===== DRIVER METADATA ===== */
 
 private String getDriverVersion() {
-    String version = "v2.0.1"
+    String version = "v2.0.2"
     logging("getDriverVersion() = ${version}", 1)
     sendEvent(name: "driver", value: version)
     updateDataValue('driver', version)
@@ -682,7 +682,7 @@ void recoveryEvent(BigDecimal forcedMinutes=null) {
         checkHealth(displayWarnings=false)
         Integer mbe = maxEventMinutes(forcedMinutes=forcedMinutes)
         if(checkinIsRecent(maximumMinutesBetweenEvents=mbe, displayWarnings=false) == true) {
-            ifhealthWarningsOn() log.warn("Event interval normal, recovery mode DEACTIVATED!")
+            if(healthWarningsOn()) log.warn("Event interval normal, recovery mode DEACTIVATED!")
             unschedule('recoveryEvent')
             unschedule('reconnectEvent')
         }
@@ -755,7 +755,7 @@ void forceRecoveryMode(BigDecimal minutes) {
         disableForcedRecoveryMode()
     } else if(checkinIsRecent(maximumMinutesBetweenEvents=minutesI) == false) {
         recoveryMode = recoveryMode == null ? "Normal" : recoveryMode
-        ifhealthWarningsOn() log.warn("Forced recovery mode ($recoveryMode) ACTIVATED!")
+        if(healthWarningsOn()) log.warn("Forced recovery mode ($recoveryMode) ACTIVATED!")
         state.forcedMinutes = minutes
         runIn(minutesI * 60, 'disableForcedRecoveryMode')
         scheduleRecovery(forcedMinutes=minutes)
@@ -768,7 +768,7 @@ void disableForcedRecoveryMode() {
     state.forcedMinutes = 0
     unschedule('recoveryEvent')
     unschedule('reconnectEvent')
-    ifhealthWarningsOn() log.warn("Forced recovery mode DEACTIVATED!")
+    if(healthWarningsOn()) log.warn("Forced recovery mode DEACTIVATED!")
 }
 
 void scheduleLogsOff(boolean noLogWarning=false) {

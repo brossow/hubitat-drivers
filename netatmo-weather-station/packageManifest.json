@@ -1,17 +1,17 @@
 {
-  "packageName": "Netatmo Weather Station Connect",
+  "packageName": "Netatmo Weather Station",
   "minimumHEVersion": "2.2.8",
   "author": "Brent Rossow",
   "version": "0.5.0",
-  "dateReleased": "2026-10-09",
-  "releaseNotes": "Reliability fix. A temporary failure renewing the Netatmo access token (a network blip or Netatmo outage) used to stop polling until you reauthorized; it is now retried on the next poll, and only a definite rejection from Netatmo signs the hub out. Expired or revoked tokens reported with HTTP 403 are now renewed and retried. Every device now reports healthStatus (online or offline) from Netatmo's reachable flag.",
+  "dateReleased": "2026-10-10",
+  "releaseNotes": "Renamed to Netatmo Weather Station (was Netatmo Weather Station Connect); an existing install keeps its label until you edit it. Reliability fix: a temporary failure renewing the Netatmo access token (a network blip or Netatmo outage) used to stop polling until you reauthorized; it is now retried on the next poll, and only a definite rejection from Netatmo signs the hub out. Expired or revoked tokens reported with HTTP 403 are now renewed and retried. Every device now reports healthStatus (online or offline) from Netatmo's reachable flag.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/netatmo-weather-station",
   "communityLink": "https://community.hubitat.com/t/release-new-netatmo-weather-station-integration/163479",
   "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo-weather-station/LICENSE",
   "apps": [
     {
       "id": "ce68ed2f-8743-478f-a194-7768c7b7ac3a",
-      "name": "Netatmo Weather Station Connect",
+      "name": "Netatmo Weather Station",
       "namespace": "brossow",
       "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/netatmo-weather-station/NetatmoWeatherStationConnect.groovy",
       "required": true,

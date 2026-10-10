@@ -1,5 +1,5 @@
 /*
- * Netatmo Weather Station Connect - Hubitat App
+ * Netatmo Weather Station - Hubitat App
  * Version: 0.5.0
  *
  * Copyright 2026 Brent Rossow
@@ -13,7 +13,7 @@
  */
 
 definition(
-    name: "Netatmo Weather Station Connect",
+    name: "Netatmo Weather Station",
     namespace: "brossow",
     author: "Brent Rossow",
     description: "Connect Netatmo Weather Stations to Hubitat",
@@ -26,7 +26,7 @@ definition(
 )
 
 preferences {
-    page(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true)
+    page(name: "mainPage", title: "Netatmo Weather Station", install: true, uninstall: true)
 }
 
 mappings {
@@ -40,18 +40,18 @@ private String netatmoTokenPath() { return "/oauth2/token" }
 private Integer tokenRefreshBufferSeconds() { return 300 }
 
 def installed() {
-    log.info "Netatmo Weather Station Connect installed"
+    log.info "Netatmo Weather Station installed"
     initialize()
 }
 
 def updated() {
-    log.info "Netatmo Weather Station Connect settings updated"
+    log.info "Netatmo Weather Station settings updated"
     initialize()
 }
 
 def uninstalled() {
     unschedule()
-    log.info "Netatmo Weather Station Connect uninstalled"
+    log.info "Netatmo Weather Station uninstalled"
 }
 
 def initialize() {
@@ -69,7 +69,7 @@ def mainPage() {
     String authorizationUrl = endpointOauthReady && credentialsConfigured() ? buildAuthorizeUrl() : ""
     repairStalePollingIfNeeded()
 
-    return dynamicPage(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true) {
+    return dynamicPage(name: "mainPage", title: "Netatmo Weather Station", install: true, uninstall: true) {
         if (!setupSaved()) {
             section {
                 paragraph urgentCalloutHtml("<b>This integration is not added to your hub yet.</b> " +
@@ -95,7 +95,7 @@ def mainPage() {
         section("Authorization") {
             paragraph authenticationStatusText()
             if (!endpointOauthReady) {
-                paragraph "Hubitat app OAuth is not enabled yet. Go to Apps code, open NetatmoWeatherStationConnect, click OAuth, enable it, then return here."
+                paragraph "Hubitat app OAuth is not enabled yet. Go to Apps code, open Netatmo Weather Station, click OAuth, enable it, then return here."
             } else if (credentialsConfigured()) {
                 paragraph authorizationLinkHtml(authorizationUrl, state.netatmoAuthenticated ? "Reauthorize Netatmo" : "Authorize Netatmo")
                 if (state.netatmoAuthenticated) {
@@ -2118,7 +2118,7 @@ private renderCallbackPage(String title, String message, String remediation = ""
   <main class="panel">
     <h2>${escapeHtml(title)}</h2>
     <p>${escapeHtml(message)}</p>
-${remediationHtml}    <p>Close this tab, then return to the Netatmo Weather Station Connect integration page in Hubitat and refresh it to see the latest authorization status.</p>
+${remediationHtml}    <p>Close this tab, then return to the Netatmo Weather Station integration page in Hubitat and refresh it to see the latest authorization status.</p>
   </main>
 </body>
 </html>

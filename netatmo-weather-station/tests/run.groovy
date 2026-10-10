@@ -1,4 +1,4 @@
-// Off-hub tests for Netatmo Weather Station Connect. Run with tests/run.sh.
+// Off-hub tests for Netatmo Weather Station. Run with tests/run.sh.
 //
 // The app and driver files are parsed (never run, so definition{}/metadata{} are
 // skipped) on top of HubStub, a minimal stand-in for the Hubitat sandbox. Netatmo's

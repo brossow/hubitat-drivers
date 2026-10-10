@@ -1,6 +1,10 @@
 # Changelog
 
-## [0.5.0] - 2026-10-09
+## [0.5.0] - 2026-10-10
+
+Renamed:
+
+- The integration is now **Netatmo Weather Station** (it was Netatmo Weather Station Connect), in Hubitat Package Manager, on the integration page and in its logs. "Connect" was a holdover from SmartThings naming. Child devices, settings and authorization are unchanged. An integration you've already added keeps the label it was given when you installed it; to update it, open the integration and edit its name.
 
 Fixed:
 

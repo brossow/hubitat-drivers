@@ -5,7 +5,7 @@
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
  *
- * Driver for normalized data supplied by the Netatmo Weather Station Connect parent app.
+ * Driver for normalized data supplied by the Netatmo Weather Station parent app.
  */
 
 metadata {

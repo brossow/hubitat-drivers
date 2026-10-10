@@ -9,7 +9,7 @@ Device drivers for [Hubitat Elevation](https://hubitat.com) by [Brent Rossow](ht
 | [Aeotec Heavy Duty Smart Switch](aeotec/) | Z-Wave switch with power metering (ZW078) |
 | [Bambu Lab Printer](bambu-lab/) *(unreleased)* | Bambu Lab printer status, AMS filament and dashboard tiles over the printer's local MQTT broker. Not in HPM; builds on jonnyborbs's driver — see its README |
 | [BirdWeather PUC](birdweather/) | Live bird detection data from a BirdWeather PUC station |
-| [Netatmo Weather Station Connect](netatmo-weather-station/) | Netatmo Weather Station integration with base station and module child devices |
+| [Netatmo Weather Station](netatmo-weather-station/) | Netatmo weather stations: base station, indoor and outdoor modules, rain and wind gauges |
 | [Rheem EcoNet](rheem-econet/) | Rheem EcoNet thermostats and water heaters |
 | [Xiaomi/Aqara Temperature & Humidity](xiaomi-aqara/) | Zigbee T&H sensors (WSDCGQ01LM, WSDCGQ11LM, Aqara T1, Keen Home) |
 

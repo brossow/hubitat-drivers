@@ -1,11 +1,11 @@
 /*
  * Netatmo Weather Base Station - Hubitat Driver
- * Version: 0.3.0
+ * Version: 0.5.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
  *
- * Driver for normalized data supplied by the Netatmo Weather Station Connect parent app.
+ * Driver for normalized data supplied by the Netatmo Weather Station parent app.
  */
 
 metadata {
@@ -30,7 +30,7 @@ metadata {
         attribute "minTemperatureTime", "string"
         attribute "maxTemperatureTime", "string"
         attribute "healthIndex", "number"
-        attribute "healthStatus", "string"
+        attribute "healthStatus", "enum", ["online", "offline"]
         attribute "wifiStatus", "number"
         attribute "reachable", "string"
         attribute "lastSeen", "string"
@@ -91,7 +91,6 @@ def updatedFromParent(Map data) {
     sendEventIfPresent("noise", dashboard.noise, "dB")
     sendEventIfPresent("soundPressureLevel", dashboard.soundPressureLevel, "dB")
     sendEventIfPresent("healthIndex", dashboard.healthIndex)
-    sendEventIfPresent("healthStatus", dashboard.healthStatus)
     sendEventIfPresent("wifiStatus", metadata.wifiStatus)
     sendEventIfPresent("firmware", metadata.firmware)
     sendEventIfPresent("dataTypes", joinListValue(metadata.dataTypes))
@@ -101,6 +100,8 @@ def updatedFromParent(Map data) {
     sendEventIfPresent("temperatureTrend", dashboard.tempTrend)
     sendEventIfPresent("pressureTrend", dashboard.pressureTrend)
     sendEventIfPresent("reachable", data.reachable == null ? null : data.reachable.toString())
+    // Hubitat's device-health convention: online while Netatmo reports the device reachable
+    sendEventIfPresent("healthStatus", data.reachable == null ? null : (data.reachable ? "online" : "offline"))
     sendEventIfPresent("stationName", data.stationName)
     sendEventIfPresent("moduleName", data.moduleName)
 

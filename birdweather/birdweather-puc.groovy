@@ -15,10 +15,12 @@
  *
  * ── FINDING YOUR STATION ID ───────────────────────────────────────────────
  *  Your station ID is the number in the URL when viewing your station at
- *  app.birdweather.com (e.g. app.birdweather.com/stations/25574 → ID is 25574).
+ *  app.birdweather.com (e.g. app.birdweather.com/stations/12345 → ID is 12345).
  *
  *  The longer API Token (found in the app under Advanced Settings) is only
- *  needed for private stations. Leave it blank for public stations.
+ *  needed for private stations. Leave it blank for public stations. For a
+ *  private station, enter the Station ID as usual and add the token: the
+ *  driver then reads the station through the token.
  *
  * ── AUTOMATION IDEAS ──────────────────────────────────────────────────────
  *  • "birdDetected" event fires on every new detection → announce on speaker
@@ -29,13 +31,21 @@
  *  • Rule Machine: IF newLifetimeSpeciesDetected THEN send push "%value%"
  */
 
-private String getDriverVersion() { return "1.5.0" }
+private String getDriverVersion() { return "1.6.0" }
 
 // The BirdWeather /species endpoint silently caps `limit` at 100 and ignores
 // anything larger, so the all-time list has to be walked one page at a time.
 private int  getSpeciesPageSize()   { return 100 }
 private int  getSpeciesMaxPages()   { return 20 }        // safety stop — 2,000 species
 private long getLifetimeRefreshMs() { return 3600000L }  // re-read the all-time list hourly
+
+// A busy station logs more than 10 detections in 5 minutes. Each poll asks for a
+// small page; if the last detection already seen isn't on it, the driver walks
+// back with the API's cursor in full pages (the API caps limit at 100 too).
+private int getDetectionFirstPage()  { return 25 }
+private int getDetectionPageSize()   { return 100 }
+private int getDetectionMaxPages()   { return 5 }         // safety stop — about 425 detections
+private int getMaxBirdDetectedPerPoll() { return 10 }     // a backlog doesn't replay every bird
 
 metadata {
     definition(
@@ -88,6 +98,7 @@ metadata {
         attribute "driverVersion",        "string"
         attribute "lastPollStatus",       "string"   // "OK" or "Error: ..."
         attribute "lastPollTime",         "string"
+        attribute "healthStatus",         "enum", ["online", "offline"]  // offline after a poll and its retry both fail
 
         command "refresh"
         command "resetHistory"
@@ -97,12 +108,12 @@ metadata {
 preferences {
     input "stationId", "text",
         title:       "Station ID",
-        description: "Numeric ID from your station's URL at app.birdweather.com (e.g. 25574)",
+        description: "Numeric ID from your station's URL at app.birdweather.com (e.g. 12345)",
         required:    true
 
     input "apiToken", "text",
         title:       "API Token (optional)",
-        description: "Only needed for private stations — found in the app under Advanced Settings",
+        description: "Only needed for private stations — found in the app under Advanced Settings. Enter it along with the Station ID",
         required:    false
 
     input "pollInterval", "enum",
@@ -161,22 +172,23 @@ def uninstalled() {
 }
 
 def initialize() {
-    if (!stationId?.trim()) {
+    state.remove("retryScheduled")  // 1.5.0 and earlier; could stick and turn retries off for good
+    if (!stationPath) {
         log.warn "BirdWeather PUC: no station ID configured"
         sendEvent(name: "lastPollStatus", value: "Error: Station ID not set")
         return
     }
     sendEvent(name: "driverVersion", value: driverVersion)
     schedulePolling()
-    runIn(3, refresh)
+    runIn(3, "refresh")
 }
 
 // ── Scheduling ─────────────────────────────────────────────────────────────
 
 private schedulePolling() {
     def cron = pollIntervalToCron(pollInterval ?: "5 minutes")
-    schedule(cron, poll)
-    schedule("0 0 3 * * ?", initialize)  // daily watchdog at 3 AM re-registers schedule if dropped
+    schedule(cron, "poll")
+    schedule("0 0 3 * * ?", "initialize")  // daily watchdog at 3 AM re-registers schedule if dropped
     debugLog "Polling scheduled: every ${pollInterval} (${cron})"
 }
 
@@ -200,28 +212,31 @@ def refresh() {
 }
 
 def poll() {
-    if (!stationId?.trim()) {
+    if (!stationPath) {
         log.warn "BirdWeather PUC: poll skipped — no station ID"
         return
     }
     if (nightModeEnable) {
         def sun = getSunriseAndSunset()
-        def now = new Date()
-        if (now.before(sun.sunrise) || now.after(sun.sunset)) {
+        def rightNow = new Date(now())
+        if (sun?.sunrise && sun?.sunset && (rightNow.before(sun.sunrise) || rightNow.after(sun.sunset))) {
             debugLog "Night mode: skipping poll (outside sunrise/sunset window)"
             return
         }
     }
     maybeResetDailyTracking()
-    fetchDetections()
     fetchDayStats()
     fetchTopSpecies()
     fetchAllTimeStats()
-    maybeFetchAllTimeSpecies()
+    // The detections handler and the all-time species walk both rewrite
+    // state.lifetimeSpeciesSeen, so they run one after the other, never side by
+    // side, where either execution could save its copy over the other's.
+    // Detections go first: the walk would add a first-ever species to the list
+    // before the detection that should announce it had been looked at.
+    fetchDetections(lifetimeListDue())
 }
 
 def retryPoll() {
-    state.retryScheduled = false
     log.info "BirdWeather PUC: retrying after transient error"
     poll()
 }
@@ -240,13 +255,13 @@ def resetHistory() {
     ["lastConfidence", "todaySpecies", "todayDetections",
      "topSpeciesCount", "lifetimeSpecies", "lifetimeDetections"
     ].each { sendEvent(name: it, value: 0) }
-    runIn(2, refresh)
+    runIn(2, "refresh")
 }
 
 // ── Daily Tracking Reset ────────────────────────────────────────────────────
 
 private maybeResetDailyTracking() {
-    def today = new Date().format("yyyy-MM-dd", location.timeZone)
+    def today = new Date(now()).format("yyyy-MM-dd", location.timeZone)
     if (state.trackingDate != today) {
         debugLog "New day (${today}) — resetting daily species tracking"
         state.todaySpeciesSeen = []
@@ -258,41 +273,54 @@ private maybeResetDailyTracking() {
 // ── API Calls ──────────────────────────────────────────────────────────────
 
 /**
- * Builds an asynchttpGet params map, adding an Authorization header
- * when an API token has been configured.
+ * The station segment of every API URL. BirdWeather reads a station's token
+ * only from the URL, in place of the station ID; the Authorization header is
+ * for administrator tokens. So a private station is read by its token.
  */
+private String getStationPath() {
+    def token = apiToken?.toString()?.trim()
+    if (token) return java.net.URLEncoder.encode(token, "UTF-8")
+    def id = stationId?.toString()?.trim()
+    if (!id) return null
+    def fromUrl = (id =~ /\/stations\/(\d+)/)  // a pasted app.birdweather.com/stations/… link
+    return fromUrl.find() ? fromUrl.group(1) : id
+}
+
+private String apiUrl(String endpoint) {
+    return "https://app.birdweather.com/api/v1/stations/${stationPath}/${endpoint}"
+}
+
+/** Builds an asynchttpGet params map. */
 private Map buildParams(String uri, Map query = [:]) {
     def params = [uri: uri, contentType: "application/json", timeout: 20]
     if (query) params.query = query
-    if (apiToken?.trim()) params.headers = ["Authorization": "Bearer ${apiToken.trim()}"]
     return params
 }
 
-private fetchDetections() {
-    def depth = safeInt(historyDepth, 5)
-    def limit = Math.max(depth, 10)
-    asynchttpGet("handleDetectionsResponse",
-        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/detections",
-                    [limit: limit]),
-        [depth: depth])
+/**
+ * Reads detections newest first. The first page is small; later pages walk back
+ * from `cursor` (the oldest detection read so far) until the last one already
+ * seen turns up. `collected` carries the new detections, trimmed to what the
+ * handler needs, from page to page. `thenLifetime`: read the all-time species
+ * list once the detections are done with, however that ends.
+ */
+private fetchDetections(boolean thenLifetime = false, Long cursor = null, int page = 1, List collected = []) {
+    def query = [limit: page == 1 ? Math.max(safeInt(historyDepth, 5), detectionFirstPage) : detectionPageSize]
+    if (cursor) query.cursor = cursor
+    asynchttpGet("handleDetectionsResponse", buildParams(apiUrl("detections"), query),
+                 [page: page, collected: collected, thenLifetime: thenLifetime])
 }
 
 private fetchDayStats() {
-    asynchttpGet("handleDayStatsResponse",
-        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/stats",
-                    [period: "day"]))
+    asynchttpGet("handleDayStatsResponse", buildParams(apiUrl("stats"), [period: "day"]))
 }
 
 private fetchTopSpecies() {
-    asynchttpGet("handleTopSpeciesResponse",
-        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/species",
-                    [period: "day", limit: 5]))
+    asynchttpGet("handleTopSpeciesResponse", buildParams(apiUrl("species"), [period: "day", limit: 5]))
 }
 
 private fetchAllTimeStats() {
-    asynchttpGet("handleAllTimeStatsResponse",
-        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/stats",
-                    [period: "all"]))
+    asynchttpGet("handleAllTimeStatsResponse", buildParams(apiUrl("stats"), [period: "all"]))
 }
 
 /**
@@ -301,178 +329,210 @@ private fetchAllTimeStats() {
  * (or on demand via Refresh); newLifetimeSpeciesDetected fills the gap in
  * between by adding species as they are detected.
  */
-private maybeFetchAllTimeSpecies() {
+private boolean lifetimeListDue() {
     def lastMs = state.lastLifetimeFetchMs ?: 0
     if (now() - lastMs < lifetimeRefreshMs) {
         debugLog "All-time species list is current — skipping refresh"
-        return
+        return false
     }
-    fetchAllTimeSpecies(1)
+    return true
 }
 
 private fetchAllTimeSpecies(int page) {
     if (page == 1) state.remove("lifetimeFetchBuffer")
     asynchttpGet("handleAllTimeSpeciesResponse",
-        buildParams("https://app.birdweather.com/api/v1/stations/${stationId}/species",
-                    [period: "all", limit: speciesPageSize, page: page]),
+        buildParams(apiUrl("species"), [period: "all", limit: speciesPageSize, page: page]),
         [page: page])
 }
 
 // ── Response Handlers ──────────────────────────────────────────────────────
 
 def handleDetectionsResponse(response, data) {
-    if (response.hasError()) {
-        def status = response.status
-        def msg = "Error: HTTP ${status}"
-        log.warn "BirdWeather detections API — ${msg}"
-        sendEvent(name: "lastPollStatus", value: msg)
-        if ((status == 408 || status >= 500) && !state.retryScheduled) {
-            state.retryScheduled = true
-            log.info "BirdWeather PUC: scheduling retry in 60 seconds"
-            runIn(60, "retryPoll")
-        }
-        return
-    }
-
+    boolean walkingOn = false
     try {
-        def json       = response.json
-        def detections = json?.detections
-        def depth      = data?.depth ?: safeInt(historyDepth, 5)
+        if (response.hasError()) {
+            pollFailed(response.status)
+            return
+        }
+        int  page        = safeInt(data?.page, 1)
+        List collected   = (data?.collected ?: []).collect()
+        def  detections  = response.json?.detections ?: []
+        def  lastSeenId  = state.lastDetectionId?.toString()
 
-        if (!detections) {
-            debugLog "Detections response contained no detections array"
-            sendEvent(name: "lastPollStatus", value: "OK")
-            sendEvent(name: "lastPollTime",   value: nowStr())
+        if (page == 1) showLatest(detections)
+
+        if (!detections && page == 1) {
+            debugLog "Detections response contained no detections"
+            pollSucceeded()
             return
         }
 
-        // ── Confidence filter ─────────────────────────────────────────────
-        def minConf = safeFloat(minConfidencePct, 0) / 100.0
-        if (minConf > 0) {
-            detections = detections.findAll { safeFloat(it?.confidence, 0) >= minConf }
-        }
-
-        // ── Build recent-detections list ───────────────────────────────────
-        def recentList = detections.take(depth).collect { d ->
-            def sp = d.species ?: [:]
-            [
-                id:         d.id,
-                species:    speciesName(sp),
-                scientific: scientificName(sp),
-                confidence: pct(d.confidence),
-                certainty:  d.certainty ?: "",
-                timestamp:  d.timestamp ?: "",
-                imageUrl:   imageUrl(sp)
-            ]
-        }
-        sendEvent(name: "recentDetections", value: groovy.json.JsonOutput.toJson(recentList))
-
-        // ── Latest detection attributes ────────────────────────────────────
-        def latest     = detections[0]
-        def latestId   = latest?.id?.toString()
-        def lastSeenId = state.lastDetectionId ?: ""
-
-        def sp           = latest.species ?: [:]
-        def commonName   = speciesName(sp)
-        def sciName      = scientificName(sp)
-        def confidence   = pct(latest.confidence)
-        def certaintyRaw = latest.certainty ?: ""
-        def certainty    = formatCertainty(certaintyRaw)
-        def timestamp    = latest.timestamp ?: "—"
-        def imgUrl       = imageUrl(sp)
-        def soundUrl     = latest.soundscape?.url ?: ""
-
-        sendEvent(name: "lastSpecies",          value: commonName)
-        sendEvent(name: "lastSpeciesScientific", value: sciName)
-        sendEvent(name: "lastConfidence",        value: confidence, unit: "%")
-        sendEvent(name: "lastCertainty",         value: certainty)
-        sendEvent(name: "lastDetectedAt",        value: timestamp)
-        sendEvent(name: "lastDetectedTime",      value: formatDetectionTime(timestamp))
-        if (imgUrl)   sendEvent(name: "lastSpeciesImageUrl", value: imgUrl)
-        if (soundUrl) sendEvent(name: "lastSoundscapeUrl",   value: soundUrl)
-
-        // ── Find all new detections since last poll ───────────────────────
-        // Process every detection newer than lastSeenId (oldest first) so
-        // todaySpeciesList, newSpeciesDetected, and newLifetimeSpeciesDetected
-        // are never missed because a different bird was detected[0] at poll time.
-        def newDetections = []
         if (!lastSeenId) {
-            // First run: process only the most recent to establish baseline
-            newDetections = [latest]
-        } else if (latestId && latestId != lastSeenId) {
-            def cutoffIndex = detections.findIndexOf { it?.id?.toString() == lastSeenId }
-            def candidates  = (cutoffIndex == -1) ? detections.collect() : detections.take(cutoffIndex).collect()
-            newDetections   = candidates.reverse()  // oldest first
+            // First run: process only the most recent to establish a baseline
+            state.lastDetectionId = detections[0].id?.toString()
+            processNewDetections([compactDetection(detections[0])], true)
+            pollSucceeded()
+            return
         }
 
-        if (newDetections) {
-            state.lastDetectionId = latestId
-            debugLog "Processing ${newDetections.size()} new detection(s)"
+        // Look for the last detection already seen before any filtering, so
+        // changing the confidence threshold can't make it look missing.
+        def cutoff = detections.findIndexOf { it?.id?.toString() == lastSeenId }
+        collected.addAll((cutoff == -1 ? detections : detections.take(cutoff)).collect { compactDetection(it) })
 
-            def seenToday    = (state.todaySpeciesSeen    ?: []).collect()
-            def seenLifetime = (state.lifetimeSpeciesSeen ?: []).collect()
-
-            newDetections.each { det ->
-                def dSp      = det.species ?: [:]
-                def dName    = speciesName(dSp)
-                def dSci     = scientificName(dSp)
-                def dConf    = pct(det.confidence)
-                def dCertRaw = det.certainty ?: ""
-                def dCert    = formatCertainty(dCertRaw)
-
-                if (passesEventFilter(dCertRaw, det.confidence)) {
-                    debugLog "New detection: ${dName} (${dConf}%, ${dCert})"
-
-                    if (enableBirdDetectedEvent != false) {
-                        sendEvent(
-                            name:            "birdDetected",
-                            value:           dName,
-                            descriptionText: "${dName} detected (${dConf}%, ${dCert})"
-                        )
-                    }
-
-                    if (!(dName in seenToday)) {
-                        seenToday << dName
-                        sendEvent(name: "todaySpeciesList", value: groovy.json.JsonOutput.toJson(seenToday))
-                        sendEvent(
-                            name:            "newSpeciesDetected",
-                            value:           dName,
-                            descriptionText: "First ${dName} today! (${dSci})"
-                        )
-                        log.info "BirdWeather: first ${dName} today — ${seenToday.size()} species so far"
-                    }
-
-                    if (!(dName in seenLifetime)) {
-                        seenLifetime << dName
-                        // Until the all-time list has loaded at least once there is no
-                        // way to tell a genuine first-ever sighting from a bird we simply
-                        // haven't read in yet — record it, but don't cry wolf.
-                        if (state.lifetimeBootstrapped) {
-                            sendEvent(
-                                name:            "newLifetimeSpeciesDetected",
-                                value:           dName,
-                                descriptionText: "New lifetime species: ${dName} (${dSci})"
-                            )
-                            log.info "BirdWeather: new lifetime species — ${dName}"
-                        } else {
-                            debugLog "All-time list not loaded yet — recording ${dName} without firing an event"
-                        }
-                    }
-                } else {
-                    debugLog "Event suppressed by certainty filter: ${dCert}"
-                }
+        if (cutoff == -1 && detections) {
+            if (page < detectionMaxPages) {
+                walkingOn = true
+                fetchDetections(data?.thenLifetime == true, detections[-1].id as Long, page + 1, collected)
+                return
             }
-
-            state.todaySpeciesSeen    = seenToday
-            state.lifetimeSpeciesSeen = seenLifetime
+            log.warn "BirdWeather: more than ${collected.size()} detections since the last poll — older ones were skipped"
         }
 
-        sendEvent(name: "lastPollStatus", value: "OK")
-        sendEvent(name: "lastPollTime",   value: nowStr())
+        if (collected) {
+            state.lastDetectionId = collected[0].id
+            processNewDetections(collected.reverse())  // oldest first
+        }
+        pollSucceeded()
 
     } catch (Exception e) {
         log.error "BirdWeather: error parsing detections — ${e.message}"
         sendEvent(name: "lastPollStatus", value: "Error: ${e.message}")
+    } finally {
+        if (!walkingOn && data?.thenLifetime) fetchAllTimeSpecies(1)
+    }
+}
+
+/** Latest-detection attributes and recentDetections, from the newest page. */
+private showLatest(List detections) {
+    def shown  = detections.findAll { passesConfidence(it?.confidence) }
+    def depth  = safeInt(historyDepth, 5)
+
+    def recentList = shown.take(depth).collect { d ->
+        def sp = d.species ?: [:]
+        [
+            id:         d.id,
+            species:    speciesName(sp),
+            scientific: scientificName(sp),
+            confidence: pct(d.confidence),
+            certainty:  d.certainty ?: "",
+            timestamp:  d.timestamp ?: "",
+            imageUrl:   imageUrl(sp)
+        ]
+    }
+    if (detections) sendEvent(name: "recentDetections", value: groovy.json.JsonOutput.toJson(recentList))
+
+    def latest = shown ? shown[0] : null
+    if (!latest) return
+
+    def sp        = latest.species ?: [:]
+    def timestamp = latest.timestamp ?: "—"
+    def imgUrl    = imageUrl(sp)
+    def soundUrl  = latest.soundscape?.url ?: ""
+
+    sendEvent(name: "lastSpecies",           value: speciesName(sp))
+    sendEvent(name: "lastSpeciesScientific", value: scientificName(sp))
+    sendEvent(name: "lastConfidence",        value: pct(latest.confidence), unit: "%")
+    sendEvent(name: "lastCertainty",         value: formatCertainty(latest.certainty ?: ""))
+    sendEvent(name: "lastDetectedAt",        value: timestamp)
+    sendEvent(name: "lastDetectedTime",      value: formatDetectionTime(timestamp))
+    if (imgUrl)   sendEvent(name: "lastSpeciesImageUrl", value: imgUrl)
+    if (soundUrl) sendEvent(name: "lastSoundscapeUrl",   value: soundUrl)
+}
+
+/** Just what processNewDetections needs, so a long backlog stays small between pages. */
+private Map compactDetection(det) {
+    def sp = det?.species ?: [:]
+    return [id: det?.id?.toString(), name: speciesName(sp), sci: scientificName(sp),
+            confidence: det?.confidence, certainty: det?.certainty ?: ""]
+}
+
+/**
+ * Fires events for new detections, oldest first. Every one counts toward
+ * today's and the lifetime species, so a first sighting is never missed, but
+ * after a backlog only the newest few fire birdDetected.
+ */
+private processNewDetections(List detections, boolean baseline = false) {
+    def wanted = detections.findAll { passesConfidence(it.confidence) }
+    if (!wanted) return
+    debugLog "Processing ${wanted.size()} new detection(s)"
+
+    def seenToday    = (state.todaySpeciesSeen    ?: []).collect()
+    def seenLifetime = (state.lifetimeSpeciesSeen ?: []).collect()
+    int birdEventsFrom = wanted.size() - maxBirdDetectedPerPoll
+    if (birdEventsFrom > 0) debugLog "Backlog of ${wanted.size()} — birdDetected fires for the newest ${maxBirdDetectedPerPoll} only"
+
+    wanted.eachWithIndex { det, i ->
+        def dName = det.name
+        def dSci  = det.sci
+        def dConf = pct(det.confidence)
+        def dCert = formatCertainty(det.certainty)
+
+        if (!passesEventFilter(det.certainty)) {
+            debugLog "Event suppressed by certainty filter: ${dCert}"
+            return
+        }
+        debugLog "New detection: ${dName} (${dConf}%, ${dCert})"
+
+        if (enableBirdDetectedEvent != false && i >= birdEventsFrom) {
+            sendEvent(
+                name:            "birdDetected",
+                value:           dName,
+                descriptionText: "${dName} detected (${dConf}%, ${dCert})"
+            )
+        }
+
+        if (!(dName in seenToday)) {
+            seenToday << dName
+            sendEvent(name: "todaySpeciesList", value: groovy.json.JsonOutput.toJson(seenToday))
+            sendEvent(
+                name:            "newSpeciesDetected",
+                value:           dName,
+                descriptionText: "First ${dName} today! (${dSci})"
+            )
+            log.info "BirdWeather: first ${dName} today — ${seenToday.size()} species so far"
+        }
+
+        if (!(dName in seenLifetime)) {
+            seenLifetime << dName
+            // Until the all-time list has loaded at least once there is no way to
+            // tell a genuine first-ever sighting from a bird we simply haven't read
+            // in yet, and the baseline detection on a first run or after Reset
+            // History may be older than the list. Record it, but don't cry wolf.
+            if (state.lifetimeBootstrapped && !baseline) {
+                sendEvent(
+                    name:            "newLifetimeSpeciesDetected",
+                    value:           dName,
+                    descriptionText: "New lifetime species: ${dName} (${dSci})"
+                )
+                log.info "BirdWeather: new lifetime species — ${dName}"
+            } else {
+                debugLog "All-time list not loaded yet — recording ${dName} without firing an event"
+            }
+        }
+    }
+
+    state.todaySpeciesSeen    = seenToday
+    state.lifetimeSpeciesSeen = seenLifetime
+}
+
+private pollSucceeded() {
+    state.failedPolls = 0
+    sendEvent(name: "lastPollStatus", value: "OK")
+    sendEvent(name: "lastPollTime",   value: nowStr())
+    sendEvent(name: "healthStatus",   value: "online")
+}
+
+/** A failed detections request. One failure is retried; a second in a row is offline. */
+private pollFailed(status) {
+    def msg = "Error: HTTP ${status}"
+    log.warn "BirdWeather detections API — ${msg}"
+    sendEvent(name: "lastPollStatus", value: msg)
+    state.failedPolls = (state.failedPolls ?: 0) + 1
+    if (state.failedPolls >= 2) sendEvent(name: "healthStatus", value: "offline")
+    if (status == 408 || status >= 500) {
+        log.info "BirdWeather PUC: scheduling retry in 60 seconds"
+        runIn(60, "retryPoll")  // replaces any retry already pending
     }
 }
 
@@ -543,12 +603,12 @@ def handleAllTimeStatsResponse(response, data) {
 def handleAllTimeSpeciesResponse(response, data) {
     def page = safeInt(data?.page, 1)
 
-    if (response.hasError()) {
-        debugLog "All-time species API returned HTTP ${response.status} on page ${page} — keeping existing list"
-        state.remove("lifetimeFetchBuffer")
-        return
-    }
     try {
+        if (response.hasError()) {
+            debugLog "All-time species API returned HTTP ${response.status} on page ${page} — keeping existing list"
+            state.remove("lifetimeFetchBuffer")
+            return
+        }
         def json        = response.json
         def speciesList = json?.species
         if (speciesList == null) {
@@ -626,11 +686,17 @@ private String imageUrl(Map sp) {
  * Returns true if the certainty level meets the configured event filter.
  * Ascending confidence order: unlikely < uncertain < very_likely < almost_certain
  */
-private boolean passesEventFilter(String certainty, confidence) {
+private boolean passesEventFilter(String certainty) {
     def filter = announceCertaintyFilter ?: "all"
     if (filter == "all") return true
     def rank = [unlikely: 0, uncertain: 1, very_likely: 2, almost_certain: 3]
     return (rank[certainty] ?: 0) >= (rank[filter] ?: 0)
+}
+
+/** True if a detection meets the Minimum Confidence % preference. */
+private boolean passesConfidence(confidence) {
+    def minConf = safeFloat(minConfidencePct, 0) / 100.0
+    return minConf <= 0 || safeFloat(confidence, 0) >= minConf
 }
 
 private String formatCertainty(String raw) {
@@ -678,7 +744,7 @@ private float safeFloat(val, float def_) {
 }
 
 private String nowStr() {
-    return new Date().format("yyyy-MM-dd HH:mm:ss", location.timeZone)
+    return new Date(now()).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
 }
 
 private void debugLog(String msg) {

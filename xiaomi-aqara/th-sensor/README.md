@@ -59,8 +59,8 @@ HPM listing coming soon after initial testing.
 |---------|-------------|
 | **Enable debug / info logging** | Controls log verbosity; debug auto-disables after 30 minutes |
 | **Enable Last Checkin Date / Epoch** | Records when the device last reported |
-| **Enable Presence** | Marks device not-present if no checkin for 3+ hours (requires checkin enabled) |
-| **Enable Presence Warning** | Logs a warning when presence transitions |
+| **Enable Health Status** | Sets `healthStatus` to offline if the device sends nothing for 3+ hours (requires checkin enabled) |
+| **Enable Health Warnings** | Logs a warning when the device goes offline or misses checkins |
 | **Recovery Mode** | How aggressively to attempt recovery when the device stops checking in |
 | **Battery Min / Max Voltage** | Calibrate battery % to your actual battery chemistry |
 | **Displayed Temperature Unit** | System default, Celsius, Fahrenheit, or Kelvin |
@@ -83,7 +83,9 @@ HPM listing coming soon after initial testing.
 | RelativeHumidityMeasurement | `humidity` | % |
 | PressureMeasurement | `pressure` | mbar / kPa / inHg / mmHg / atm *(pressure models)* |
 | Battery | `battery` | % |
-| PresenceSensor | `presence` | present / not present |
+| — | `healthStatus` | online / offline / unknown |
+| — | `offlineCounter` | consecutive 3-hour checks with no events |
+| — | `restoredCounter` | times the device came back online |
 | — | `absoluteHumidity` | g/m³ *(optional)* |
 | — | `batteryVoltage` | V |
 | — | `batteryLastReplaced` | date string |
@@ -92,9 +94,9 @@ HPM listing coming soon after initial testing.
 
 ## Commands
 
-- **refresh()** — Re-read current values and re-configure presence/recovery schedules
+- **refresh()** — Re-read current values and re-configure health check/recovery schedules
 - **resetBatteryReplacedDate** — Reset the battery replacement timestamp to now
-- **resetRestoredCounter** — Reset the presence-restore event counter to 0
+- **resetRestoredCounter** — Reset the back-online counter to 0
 - **forceRecoveryMode(minutes)** — Manually trigger recovery polling for N minutes
 
 ## Tests
@@ -107,6 +109,27 @@ tests/run.sh pressure      # only tests whose name contains "pressure"
 The off-hub tests load the driver into a small stand-in for the Hubitat sandbox and check the events it sends. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
 
 ## Changelog
+
+### v2.0.2 — 2026-10-09
+
+- Fixed: Recovery Mode switched itself off the first time a sensor came back after missing check-ins, logging "Stopping Recovery feature due to Platform bug!". There was no platform bug; a typo in 2.0.0 broke the "recovery mode DEACTIVATED" warning, and the error it threw turned the feature off. **Force Recovery Mode** hit the same error. If you saw that warning, set **Recovery Mode** back to Normal (or your choice) and click **Save Preferences**
+- Fixed: sensors upgraded from 1.x through HPM logged a `checkPresence()` error every 3 hours, and their health check never ran, until preferences were saved. The leftover 1.x schedule now switches the device over to the new health check by itself
+
+### v2.0.1 — 2026-10-09
+
+- Quieter logs: raw Zigbee messages (`msgMap`, the hourly check-in data, multistate events) and internal method traces now log only with **Enable debug logging** on. With info logging, you still see readable lines such as temperature, humidity and pressure changes
+
+### v2.0.0 — 2026-10-08
+
+**Breaking:** the sensor is no longer a presence sensor. Whether it is still reporting is now shown by `healthStatus` (`online` / `offline`), the attribute Hubitat uses for device health. A thermometer no longer appears in presence pickers, so it can't count toward "everyone left" in Mode Manager or a presence rule by mistake.
+
+**If a rule used one of these sensors' presence**, change it to use `healthStatus`: *not present* is now *offline*, *present* is now *online*.
+
+- Removed the `PresenceSensor` capability and the `presence` attribute; added `healthStatus` (same 3-hour check)
+- Renamed `notPresentCounter` to `offlineCounter`; the current count carries over
+- Renamed the **Enable Presence** and **Enable Presence Warning** preferences to **Enable Health Status** and **Enable Health Warnings**; if you had turned either off, it stays off
+- Updating removes the old `presence` and `notPresentCounter` attributes from each device. Open each device and click **Save Preferences** (or wait for the next hub reboot) to apply this
+- With health status turned off, recovery mode can no longer mark the device offline
 
 ### v1.2.1 — 2026-10-08
 - Fixed pressure never updating after the first reading when displayed in atm — the change threshold was a fixed 0.1 in the displayed unit (about 100 hPa in atm, 3.4 hPa in inHg). It is now 1 hPa in every unit; kPa behaves as before

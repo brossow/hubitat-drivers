@@ -1,6 +1,6 @@
 /*
- * Netatmo Weather Station Connect - Hubitat App
- * Version: 0.4.0
+ * Netatmo Weather Station - Hubitat App
+ * Version: 0.5.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -12,8 +12,21 @@
  * consume normalized data from this app.
  */
 
+import groovy.transform.Field
+
+// Netatmo tokens are shared by every execution of this app through an in-memory copy,
+// and saved with atomicState so they reach the database at once. Plain state is a
+// per-execution copy saved when the execution ends, so two overlapping executions
+// could each renew with the same one-time refresh token, or an older execution could
+// save stale tokens back after a newer one renewed them. Either way Netatmo would
+// reject the next renewal and sign the hub out.
+@Field static final java.util.concurrent.ConcurrentHashMap tokenCache = new java.util.concurrent.ConcurrentHashMap()
+// Only one execution renews at a time; the rest wait and then use what it got.
+@Field static final java.util.concurrent.Semaphore tokenLock = new java.util.concurrent.Semaphore(1)
+@Field static long tokenLockTakenAt = 0L
+
 definition(
-    name: "Netatmo Weather Station Connect",
+    name: "Netatmo Weather Station",
     namespace: "brossow",
     author: "Brent Rossow",
     description: "Connect Netatmo Weather Stations to Hubitat",
@@ -26,32 +39,32 @@ definition(
 )
 
 preferences {
-    page(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true)
+    page(name: "mainPage", title: "Netatmo Weather Station", install: true, uninstall: true)
 }
 
 mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
-private String appVersion() { return "0.4.0" }
+private String appVersion() { return "0.5.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
 private Integer tokenRefreshBufferSeconds() { return 300 }
 
 def installed() {
-    log.info "Netatmo Weather Station Connect installed"
+    log.info "Netatmo Weather Station installed"
     initialize()
 }
 
 def updated() {
-    log.info "Netatmo Weather Station Connect settings updated"
+    log.info "Netatmo Weather Station settings updated"
     initialize()
 }
 
 def uninstalled() {
     unschedule()
-    log.info "Netatmo Weather Station Connect uninstalled"
+    log.info "Netatmo Weather Station uninstalled"
 }
 
 def initialize() {
@@ -69,7 +82,7 @@ def mainPage() {
     String authorizationUrl = endpointOauthReady && credentialsConfigured() ? buildAuthorizeUrl() : ""
     repairStalePollingIfNeeded()
 
-    return dynamicPage(name: "mainPage", title: "Netatmo Weather Station Connect", install: true, uninstall: true) {
+    return dynamicPage(name: "mainPage", title: "Netatmo Weather Station", install: true, uninstall: true) {
         if (!setupSaved()) {
             section {
                 paragraph urgentCalloutHtml("<b>This integration is not added to your hub yet.</b> " +
@@ -95,7 +108,7 @@ def mainPage() {
         section("Authorization") {
             paragraph authenticationStatusText()
             if (!endpointOauthReady) {
-                paragraph "Hubitat app OAuth is not enabled yet. Go to Apps code, open NetatmoWeatherStationConnect, click OAuth, enable it, then return here."
+                paragraph "Hubitat app OAuth is not enabled yet. Go to Apps code, open Netatmo Weather Station, click OAuth, enable it, then return here."
             } else if (credentialsConfigured()) {
                 paragraph authorizationLinkHtml(authorizationUrl, state.netatmoAuthenticated ? "Reauthorize Netatmo" : "Authorize Netatmo")
                 if (state.netatmoAuthenticated) {
@@ -369,10 +382,10 @@ def appButtonHandler(String buttonName) {
 
 String authenticationStatusText() {
     if (state.netatmoAuthenticated && isTokenValid()) {
-        return "Authenticated. Access token appears valid until ${formatTimestamp(state.netatmoTokenExpiresAt)}."
+        return "Authenticated. Access token appears valid until ${formatTimestamp(netatmoTokenExpiresAt())}."
     }
 
-    if (state.netatmoAuthenticated && state.netatmoRefreshToken) {
+    if (state.netatmoAuthenticated && netatmoRefreshToken()) {
         return "Authenticated, but the access token is expired or near expiry. It will be refreshed before the next API call."
     }
 
@@ -512,7 +525,7 @@ def oauthCallback() {
 }
 
 Boolean isTokenValid() {
-    Long expiresAt = safeLong(state.netatmoTokenExpiresAt)
+    Long expiresAt = netatmoTokenExpiresAt()
     if (!netatmoAccessToken() || !expiresAt) {
         return false
     }
@@ -525,14 +538,57 @@ Boolean ensureValidToken() {
     if (isTokenValid()) {
         return true
     }
+    return renewToken(null)
+}
 
-    if (!state.netatmoRefreshToken) {
-        log.error "Netatmo token refresh skipped: no refresh token is stored"
-        state.netatmoAuthenticated = false
+// Renews the access token, one execution at a time. rejectedAccessToken is the token
+// Netatmo just refused (401/403), or null when renewing because it is about to expire.
+// After waiting for the lock, an execution first checks whether another one already
+// renewed, and uses that instead of spending the refresh token a second time.
+private Boolean renewToken(String rejectedAccessToken) {
+    if (!acquireTokenLock()) {
+        log.warn "Netatmo token renewal is already in progress elsewhere; will retry on the next poll"
         return false
     }
+    try {
+        String current = netatmoAccessToken()
+        Boolean alreadyRenewed = rejectedAccessToken == null ? isTokenValid() : (current && current != rejectedAccessToken)
+        if (alreadyRenewed) {
+            debugLog "Netatmo token was already renewed by another execution"
+            return true
+        }
 
-    return refreshAccessToken()
+        if (!netatmoRefreshToken()) {
+            log.error "Netatmo token refresh skipped: no refresh token is stored"
+            state.netatmoAuthenticated = false
+            return false
+        }
+
+        return refreshAccessToken()
+    } finally {
+        tokenLockTakenAt = 0L
+        // Never more than one permit, even after a takeover from an execution that
+        // later turns out to have been slow rather than stuck
+        if (tokenLock.availablePermits() == 0) {
+            tokenLock.release()
+        }
+    }
+}
+
+private Boolean acquireTokenLock() {
+    if (tokenLock.tryAcquire(30, java.util.concurrent.TimeUnit.SECONDS)) {
+        tokenLockTakenAt = now()
+        return true
+    }
+    // A renewal can't legitimately take minutes (the request times out long before).
+    // If the lock has been held that long, the execution holding it was cut off
+    // without releasing it, so take it over rather than never renewing again.
+    if (tokenLockTakenAt && now() - tokenLockTakenAt > 120000L) {
+        log.warn "Netatmo token lock was held for over 2 minutes; taking it over"
+        tokenLockTakenAt = now()
+        return true
+    }
+    return false
 }
 
 Boolean refreshAccessToken() {
@@ -544,11 +600,15 @@ Boolean refreshAccessToken() {
 
     Map body = [
         grant_type: "refresh_token",
-        refresh_token: state.netatmoRefreshToken,
+        refresh_token: netatmoRefreshToken(),
         client_id: settings.clientId?.trim(),
         client_secret: settings.clientSecret?.trim()
     ]
 
+    // Only a definite rejection from Netatmo signs the hub out. A timeout, network
+    // error or Netatmo outage leaves the stored tokens alone so the next poll retries;
+    // marking the app unauthenticated here used to stop polling until someone
+    // reauthorized by hand.
     try {
         Boolean tokensStored = false
         httpPost(tokenRequestParams(body)) { resp ->
@@ -558,18 +618,32 @@ Boolean refreshAccessToken() {
 
         if (tokensStored) {
             state.netatmoAuthenticated = true
-            debugLog "Netatmo access token refreshed; expires at ${formatTimestamp(state.netatmoTokenExpiresAt)}"
+            debugLog "Netatmo access token refreshed; expires at ${formatTimestamp(netatmoTokenExpiresAt())}"
             return true
         }
 
-        log.error "Netatmo token refresh failed: token response was missing required fields"
+        log.warn "Netatmo token refresh returned no usable tokens; will retry on the next poll"
     } catch (Exception e) {
-        log.error "Netatmo token refresh failed: ${exceptionSummary(e)}"
+        Integer status = responseStatusFromException(e)
+        if (tokenRefreshRejected(status)) {
+            log.error "Netatmo rejected the token refresh (${exceptionSummary(e)}). Reauthorize Netatmo from the integration page."
+            debugLog "Netatmo token refresh exception details: ${e}"
+            state.netatmoAuthenticated = false
+            return false
+        }
+
+        log.warn "Netatmo token refresh failed temporarily (${exceptionSummary(e)}); will retry on the next poll"
         debugLog "Netatmo token refresh exception details: ${e}"
     }
 
-    state.netatmoAuthenticated = false
     return false
+}
+
+// 400 and 401 from the token endpoint mean the refresh token or client credentials
+// were refused (invalid_grant, invalid_client): only reauthorizing fixes that.
+// Anything else, including no response at all, is treated as temporary.
+private Boolean tokenRefreshRejected(Integer status) {
+    return status == 400 || status == 401
 }
 
 Map apiRequest(String method, String path, Map query = [:], Map body = null) {
@@ -584,10 +658,11 @@ private Map apiRequestInternal(String method, String path, Map query = [:], Map 
         return [success: false, status: null, data: null, error: "Authentication is not valid"]
     }
 
+    String accessTokenUsed = netatmoAccessToken()
     Map requestParams = [
         uri: buildApiUrl(path),
         query: query ?: [:],
-        headers: ["Authorization": "Bearer ${netatmoAccessToken()}"],
+        headers: ["Authorization": "Bearer ${accessTokenUsed}"],
         contentType: "application/json"
     ]
 
@@ -620,13 +695,15 @@ private Map apiRequestInternal(String method, String path, Map query = [:], Map 
         return result
     } catch (Exception e) {
         Integer status = responseStatusFromException(e)
-        if (status == 401 && allowRetry) {
-            log.warn "Netatmo API request returned 401; refreshing token and retrying once"
-            if (refreshAccessToken()) {
+        // Netatmo answers an expired or revoked access token with 403 (error codes 2
+        // and 3), not 401, so both refresh the token and retry once.
+        if ((status == 401 || status == 403) && allowRetry) {
+            log.warn "Netatmo API request returned ${status}; refreshing token and retrying once"
+            if (renewToken(accessTokenUsed)) {
                 return apiRequestInternal(method, path, query, body, false)
             }
-            log.error "Netatmo API retry skipped: token refresh after 401 failed"
-            return [success: false, status: 401, data: null, error: "Unauthorized and token refresh failed"]
+            log.error "Netatmo API retry skipped: token refresh after ${status} failed"
+            return [success: false, status: status, data: null, error: "Unauthorized and token refresh failed"]
         }
 
         log.error "Netatmo API ${verb} ${path} failed: ${exceptionSummary(e)}"
@@ -658,7 +735,7 @@ Boolean exchangeCodeForTokens(String code) {
         }
 
         if (tokensStored) {
-            debugLog "Netatmo token exchange succeeded; expires at ${formatTimestamp(state.netatmoTokenExpiresAt)}"
+            debugLog "Netatmo token exchange succeeded; expires at ${formatTimestamp(netatmoTokenExpiresAt())}"
             return true
         }
 
@@ -672,9 +749,7 @@ Boolean exchangeCodeForTokens(String code) {
 }
 
 void clearAuthState() {
-    state.remove("netatmoAccessToken")
-    state.remove("netatmoRefreshToken")
-    state.remove("netatmoTokenExpiresAt")
+    forgetTokens()
     state.remove("netatmoOAuthState")
     state.remove("refreshToken")
     state.remove("tokenExpiresAt")
@@ -1091,7 +1166,6 @@ private Map normalizeDashboard(Map dashboard) {
         noise: numberValue(dashboard.Noise),
         soundPressureLevel: numberValue(dashboard.Noise),
         healthIndex: numberValue(dashboard.health_idx),
-        healthStatus: healthStatusFromIndex(numberValue(dashboard.health_idx)),
         rain: convertRain(numberValue(dashboard.Rain)),
         rainLastHour: convertRain(numberValue(dashboard.sum_rain_1)),
         rainToday: convertRain(numberValue(dashboard.sum_rain_24)),
@@ -1638,6 +1712,7 @@ private Map tokenRequestParams(Map body) {
         uri: "${netatmoApiBaseUrl()}${netatmoTokenPath()}",
         requestContentType: "application/x-www-form-urlencoded",
         contentType: "application/json",
+        timeout: 20,
         body: body
     ]
 }
@@ -1654,31 +1729,62 @@ private Boolean storeTokenData(Map tokenData) {
         expiresIn = 3600
     }
 
-    state.netatmoAccessToken = tokenData.access_token
-    state.netatmoRefreshToken = tokenData.refresh_token
-    state.netatmoTokenExpiresAt = now() + (expiresIn * 1000L)
+    saveTokens(tokenData.access_token as String, tokenData.refresh_token as String, now() + (expiresIn * 1000L))
     state.netatmoAuthenticated = true
     return true
 }
 
-private String netatmoAccessToken() {
-    return state.netatmoAccessToken as String
+// ── Token store (see tokenCache above) ───────────────────────────────────────
+
+private Map tokenSet() {
+    Map tokens = tokenCache[app.id] as Map
+    if (tokens == null) {
+        tokens = [access: atomicState.netatmoAccessToken as String,
+                  refresh: atomicState.netatmoRefreshToken as String,
+                  expiresAt: safeLong(atomicState.netatmoTokenExpiresAt)]
+        tokenCache[app.id] = tokens
+    }
+    return tokens
+}
+
+private String netatmoAccessToken() { return tokenSet().access as String }
+private String netatmoRefreshToken() { return tokenSet().refresh as String }
+private Long netatmoTokenExpiresAt() { return tokenSet().expiresAt as Long }
+
+private void saveTokens(String access, String refresh, Long expiresAt) {
+    tokenCache[app.id] = [access: access, refresh: refresh, expiresAt: expiresAt]
+    atomicState.netatmoAccessToken = access
+    atomicState.netatmoRefreshToken = refresh
+    atomicState.netatmoTokenExpiresAt = expiresAt
+    // This execution's own state copy gets the same values, so saving it when the
+    // execution ends can't put the previous tokens back.
+    state.netatmoAccessToken = access
+    state.netatmoRefreshToken = refresh
+    state.netatmoTokenExpiresAt = expiresAt
+}
+
+private void forgetTokens() {
+    tokenCache.remove(app.id)
+    ["netatmoAccessToken", "netatmoRefreshToken", "netatmoTokenExpiresAt"].each { key ->
+        atomicState.remove(key)
+        state.remove(key)
+    }
 }
 
 private void migrateNetatmoTokenState() {
-    if (!state.netatmoAccessToken && state.accessToken && state.hubitatEndpointAccessToken && state.accessToken != state.hubitatEndpointAccessToken) {
-        state.netatmoAccessToken = state.accessToken
+    if (!netatmoAccessToken() && state.accessToken && state.hubitatEndpointAccessToken && state.accessToken != state.hubitatEndpointAccessToken) {
+        saveTokens(state.accessToken as String, netatmoRefreshToken(), netatmoTokenExpiresAt())
         debugLog "Migrated Netatmo access token away from Hubitat endpoint token state"
     }
 
-    if (!state.netatmoRefreshToken && state.refreshToken) {
-        state.netatmoRefreshToken = state.refreshToken
+    if (!netatmoRefreshToken() && state.refreshToken) {
+        saveTokens(netatmoAccessToken(), state.refreshToken as String, netatmoTokenExpiresAt())
         state.remove("refreshToken")
         debugLog "Migrated Netatmo refresh token to netatmo-specific state"
     }
 
-    if (!state.netatmoTokenExpiresAt && state.tokenExpiresAt) {
-        state.netatmoTokenExpiresAt = state.tokenExpiresAt
+    if (!netatmoTokenExpiresAt() && state.tokenExpiresAt) {
+        saveTokens(netatmoAccessToken(), netatmoRefreshToken(), safeLong(state.tokenExpiresAt))
         state.remove("tokenExpiresAt")
         debugLog "Migrated Netatmo token expiry to netatmo-specific state"
     }
@@ -1912,27 +2018,6 @@ private String measurementTimeFromSource(Map source) {
     return safeEpochSecondsAsString(dashboard.time_utc)
 }
 
-private String healthStatusFromIndex(BigDecimal healthIndex) {
-    if (healthIndex == null) {
-        return null
-    }
-
-    switch (healthIndex as Integer) {
-        case 0:
-            return "healthy"
-        case 1:
-            return "fine"
-        case 2:
-            return "fair"
-        case 3:
-            return "poor"
-        case 4:
-            return "unhealthy"
-        default:
-            return "unknown"
-    }
-}
-
 private List dataTypesFromSource(Map source) {
     if (!(source?.data_type instanceof List)) {
         return null
@@ -2120,7 +2205,7 @@ private renderCallbackPage(String title, String message, String remediation = ""
   <main class="panel">
     <h2>${escapeHtml(title)}</h2>
     <p>${escapeHtml(message)}</p>
-${remediationHtml}    <p>Close this tab, then return to the Netatmo Weather Station Connect integration page in Hubitat and refresh it to see the latest authorization status.</p>
+${remediationHtml}    <p>Close this tab, then return to the Netatmo Weather Station integration page in Hubitat and refresh it to see the latest authorization status.</p>
   </main>
 </body>
 </html>

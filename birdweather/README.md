@@ -14,13 +14,13 @@ By [Brent Rossow](https://github.com/brossow). Integrates your [BirdWeather PUC]
 
 ### Finding Your Station ID
 
-Your Station ID is the number in the URL when viewing your station at [app.birdweather.com](https://app.birdweather.com) — e.g. `app.birdweather.com/stations/25574` → Station ID is `25574`. You can also find it in the BirdWeather app under your station's settings.
+Your Station ID is the number in the URL when viewing your station at [app.birdweather.com](https://app.birdweather.com) — e.g. `app.birdweather.com/stations/12345` → Station ID is `12345`. You can also find it in the BirdWeather app under your station's settings. Pasting the whole station link works too; the driver keeps just the number.
 
 You don't need to use your own station — any public BirdWeather station works. Follow a local nature center, a favorite birding spot, or just the most active station in your area.
 
 ### API Token (optional)
 
-The longer API Token shown under Advanced Settings in the BirdWeather app is only needed for **private stations**. Leave it blank for public stations.
+The longer API Token shown under Advanced Settings in the BirdWeather app is only needed for **private stations**. Leave it blank for public stations. For a private station, enter the Station ID as usual and add the token: the driver then reads the station through the token, which is how the BirdWeather API serves a private station.
 
 ## Attributes
 
@@ -49,6 +49,7 @@ The longer API Token shown under Advanced Settings in the BirdWeather app is onl
 | `driverVersion` | Installed driver version |
 | `lastPollStatus` | `OK` or an error message |
 | `lastPollTime` | Timestamp of the last successful poll |
+| `healthStatus` | `online`, or `offline` once a poll and its retry a minute later have both failed |
 
 ## Events
 
@@ -60,6 +61,8 @@ Three events fire in the device event log and can be used as Rule Machine trigge
   `descriptionText` example: *First American Robin sighting today! (Turdus migratorius)*
 - **`newLifetimeSpeciesDetected`** — fires the first time a species is ever detected at your station; `value` = common name  
   `descriptionText` example: *New lifetime species: American Robin (Turdus migratorius)*
+
+Each poll reads every detection since the last one, however many there are, so a first sighting isn't missed on a busy station or after the hub was down. After a long gap `birdDetected` fires only for the 10 newest, so a backlog doesn't set off a string of announcements; `newSpeciesDetected` and `newLifetimeSpeciesDetected` still consider every detection. The catch-up stops at about 425 detections and logs a warning.
 
 The daily species list resets at midnight in your hub's time zone. The lifetime list does not reset — it is seeded from your station's complete history via the BirdWeather API, so it stays accurate across hub downtime and reboots.
 
@@ -75,7 +78,7 @@ The daily species list resets at midnight in your hub's time zone. The lifetime 
 | Setting | Description |
 |---------|-------------|
 | **Station ID** | Numeric ID from your station's URL at app.birdweather.com |
-| **API Token** | Optional — only needed for private stations |
+| **API Token** | Optional — only needed for private stations; enter it along with the Station ID |
 | **Poll Interval** | How often to check for new detections (1–30 min) |
 | **Recent Detections to Track** | Depth of the `recentDetections` JSON history (3, 5, 10, or 20) |
 | **Minimum Confidence %** | Ignore detections below this threshold (0 = accept all) |
@@ -114,19 +117,34 @@ Add `lastSpecies`, `todaySpecies`, and `todayDetections` as tiles using the Attr
 
 See the [community forum post](https://community.hubitat.com/t/release-birdweather-puc-driver/163303) for a complete style example including the variable layout, override CSS, and setup notes.
 
+## Known Limitations
+
+- **Catch-up limit:** after a very long gap (more than about 425 detections since the last poll, e.g. a hub that was off for most of a day), the oldest detections are skipped and a warning is logged.
+- **Certainty filter and lifetime alerts:** with *Fire events only for certainty level ≥* set above `all`, a first-ever species detected below that level is recorded without an alert, and its later high-certainty sightings won't fire one either. BirdWeather's all-time species list doesn't say how certain each sighting was, so there's no way to tell.
+
 ## API Reference
 
-This driver uses the [BirdWeather REST API](https://app.birdweather.com/api/v1):
+This driver uses the [BirdWeather REST API](https://app.birdweather.com/api/v1). For a private station, `{id}` is the station's API token:
 
 | Endpoint | Used for |
 |----------|----------|
-| `GET /stations/{id}/detections` | Latest detection + recent history |
+| `GET /stations/{id}/detections?limit=25` | Latest detection + recent history |
+| `GET /stations/{id}/detections?limit=100&cursor=N` | Catching up when more than 25 detections arrived since the last poll |
 | `GET /stations/{id}/stats?period=day` | Today's species and detection counts |
 | `GET /stations/{id}/species?period=day&limit=5` | Top species today |
 | `GET /stations/{id}/stats?period=all` | All-time species and detection counts |
 | `GET /stations/{id}/species?period=all&limit=100&page=N` | All-time species list |
 
 > **Note:** the `/species` endpoint silently caps `limit` at 100 and returns results sorted by detection count, highest first — a larger `limit` is accepted without error but ignored. The driver walks the list with `page` until a short page comes back; requesting it in one batch would quietly truncate to your 100 most-detected species.
+
+## Tests
+
+```sh
+tests/run.sh               # everything
+tests/run.sh lifetime      # only tests whose name contains "lifetime"
+```
+
+The off-hub tests load the driver into a small stand-in for the Hubitat sandbox, with a fake BirdWeather API that pages and caps results the way the real one does, and a clock the tests control. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
 
 ## License
 

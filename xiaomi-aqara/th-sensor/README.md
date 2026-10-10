@@ -113,6 +113,7 @@ The off-hub tests load the driver into a small stand-in for the Hubitat sandbox 
 ### v2.0.2 — 2026-10-09
 
 - Fixed: Recovery Mode switched itself off the first time a sensor came back after missing check-ins, logging "Stopping Recovery feature due to Platform bug!". There was no platform bug; a typo in 2.0.0 broke the "recovery mode DEACTIVATED" warning, and the error it threw turned the feature off. **Force Recovery Mode** hit the same error. If you saw that warning, set **Recovery Mode** back to Normal (or your choice) and click **Save Preferences**
+- Fixed: sensors upgraded from 1.x through HPM logged a `checkPresence()` error every 3 hours, and their health check never ran, until preferences were saved. The leftover 1.x schedule now switches the device over to the new health check by itself
 
 ### v2.0.1 — 2026-10-09
 

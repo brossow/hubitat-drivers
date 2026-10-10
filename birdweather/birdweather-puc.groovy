@@ -18,8 +18,9 @@
  *  app.birdweather.com (e.g. app.birdweather.com/stations/12345 → ID is 12345).
  *
  *  The longer API Token (found in the app under Advanced Settings) is only
- *  needed for private stations. Leave it blank for public stations. When it is
- *  set, the driver reads the station by its token instead of its ID.
+ *  needed for private stations. Leave it blank for public stations. For a
+ *  private station, enter the Station ID as usual and add the token: the
+ *  driver then reads the station through the token.
  *
  * ── AUTOMATION IDEAS ──────────────────────────────────────────────────────
  *  • "birdDetected" event fires on every new detection → announce on speaker
@@ -112,7 +113,7 @@ preferences {
 
     input "apiToken", "text",
         title:       "API Token (optional)",
-        description: "Only needed for private stations — found in the app under Advanced Settings. When set, the station is read by this token instead of its ID",
+        description: "Only needed for private stations — found in the app under Advanced Settings. Enter it along with the Station ID",
         required:    false
 
     input "pollInterval", "enum",

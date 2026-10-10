@@ -229,6 +229,17 @@ test("upgrade: the 1.x checkPresence schedule is removed") {
   [!d.scheduled.contains('checkPresence'), d.scheduled]
 }
 
+// HPM updates the code without calling updated(), so a 1.x device keeps its
+// 3-hourly checkPresence schedule until Save Preferences. That handler must
+// still exist and move the device onto checkHealth.
+test("upgrade: the 1.x checkPresence schedule still runs and switches itself over") {
+  def d = fresh([:])
+  d.scheduled << 'checkPresence'
+  d.attrs.lastCheckin = hoursAgo(4)
+  d.checkPresence()
+  [!d.scheduled.contains('checkPresence') && d.scheduled.contains('checkHealth') && d.attrs.healthStatus == "offline", [d.scheduled, d.attrs]]
+}
+
 // ── Housekeeping ─────────────────────────────────────────────────────────
 
 test("logsOff turns debug logging off") {
@@ -237,8 +248,38 @@ test("logsOff turns debug logging off") {
   [d.updatedSettings.debugLogging == [value: "false", type: "bool"], d.updatedSettings]
 }
 
+test("version: header, getDriverVersion and packageManifest.json agree") {
+  def src = driverFile.text
+  def header = (src =~ /Version: v([\d.]+)/)[0][1]
+  def code = (src =~ /String version = "v([\d.]+)"/)[0][1]
+  def manifest = new groovy.json.JsonSlurper().parse(new File(driverFile.parentFile, "packageManifest.json")).version
+  [header == code && code == manifest, "header $header, code $code, manifest $manifest"]
+}
+
 test("recovery waits 90 minutes between events by default") {
   [fresh([:]).maxEventMinutes() == 90, ""]
+}
+
+// 2.0.0 broke the warnings in these paths (ifhealthWarningsOn()), so the first
+// recoveryEvent after a sensor came back threw, and the catch turned Recovery
+// Mode off in Preferences, blaming a "Platform bug".
+def withoutRadio = { d -> d.metaClass.sendHubCommand = { cmd -> }; d.metaClass.zigbee = [readAttribute: { Object[] a -> [] }]; d }
+
+test("recovery: a sensor coming back ends recovery and leaves it enabled") {
+  def d = withoutRadio(fresh(recoveryMode: "Normal"))
+  d.attrs.lastCheckin = hoursAgo(0)
+  d.scheduled << 'recoveryEvent'
+  d.recoveryEvent()
+  [!d.scheduled.contains('recoveryEvent') && !d.updatedSettings.containsKey('recoveryMode') && d.warns.any { it.contains("DEACTIVATED") }, d.warns]
+}
+
+test("recovery: forced recovery mode starts and stops without disabling it") {
+  def d = withoutRadio(fresh(recoveryMode: "Normal"))
+  d.metaClass.runIn = { Object[] a -> }
+  d.attrs.lastCheckin = hoursAgo(2)
+  d.forceRecoveryMode(30)
+  d.disableForcedRecoveryMode()
+  [!d.updatedSettings.containsKey('recoveryMode') && d.warns.count { it.contains("Forced recovery mode") } == 2, d.warns]
 }
 
 println(ran == 0 ? "no tests match '$filter'" : failures ? "$failures of $ran FAILED" : "all $ran passed")

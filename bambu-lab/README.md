@@ -173,9 +173,9 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 | `amsTrayNow` | number | Active tray global index (255 = none / external spool) |
 | `chamberLight` | string | Chamber light state: `on` · `off` (read-only) |
 | `printError` | string | Error code (`"0"` = no error) |
-| `wifiSignal` | string | WiFi signal strength |
+| `wifiSignal` | string | WiFi signal strength; updated at most every 5 minutes |
 | `cameraUrl` | string | RTSP stream URL |
-| `lastUpdate` | string | ISO-8601 UTC timestamp of last MQTT data |
+| `lastUpdate` | string | ISO-8601 UTC timestamp of last MQTT data; updated once a minute and on state changes |
 | `html` | string | iframe stub for the combined dashboard tile |
 | `htmlAms` | string | iframe stub for the standalone AMS tile |
 | `driverVersion` | string | Installed driver version |

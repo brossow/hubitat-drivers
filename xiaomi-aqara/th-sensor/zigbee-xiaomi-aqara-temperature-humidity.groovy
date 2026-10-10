@@ -3,7 +3,7 @@
  *  Copyright 2026 Brent Rossow (modifications)
  *  SPDX-License-Identifier: GPL-3.0-or-later
  *
- *  Version: v2.0.0
+ *  Version: v2.0.2
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -144,18 +144,18 @@ void bindT1Clusters() {
 }
 
 void initialize() {
-    logging("initialize()", 100)
+    logging("initialize()", 1)
     unschedule()
     refresh()
 }
 
 void installed() {
-    logging("installed()", 100)
+    logging("installed()", 1)
     refresh()
 }
 
 void updated() {
-    logging("updated()", 100)
+    logging("updated()", 1)
     refresh()
 }
 
@@ -204,7 +204,7 @@ ArrayList<String> parse(String description) {
             }
         }
     }
-    logging("msgMap: ${msgMap}", 100)
+    logging("msgMap: ${msgMap}", 1)
 
     switch(msgMap["cluster"] + '_' + msgMap["attrId"]) {
         case "0000_0005":
@@ -247,7 +247,7 @@ ArrayList<String> parse(String description) {
             break
 
         case "0000_FF01":
-            logging("KNOWN event (Xiaomi/Aqara specific data structure with battery data - 42 - hourly checkin) - description:${description} | parseMap:${msgMap}", 100)
+            logging("KNOWN event (Xiaomi/Aqara specific data structure with battery data - 42 - hourly checkin) - description:${description} | parseMap:${msgMap}", 1)
             if(msgMap["value"].containsKey("battery")) {
                 sendBatteryEvent(msgMap["value"]["battery"] / 1000.0)
             }
@@ -277,7 +277,7 @@ ArrayList<String> parse(String description) {
                     bindT1Clusters()
                     break
                 case "0013":
-                    logging("MULTISTATE CLUSTER EVENT - description:${description} | parseMap:${msgMap}", 100)
+                    logging("MULTISTATE CLUSTER EVENT - description:${description} | parseMap:${msgMap}", 1)
                     break
                 case "0402":
                 case "0403":
@@ -314,8 +314,8 @@ void pollDevice() {
 /* ===== DRIVER METADATA ===== */
 
 private String getDriverVersion() {
-    String version = "v2.0.0"
-    logging("getDriverVersion() = ${version}", 100)
+    String version = "v2.0.2"
+    logging("getDriverVersion() = ${version}", 1)
     sendEvent(name: "driver", value: version)
     updateDataValue('driver', version)
     return version
@@ -682,7 +682,7 @@ void recoveryEvent(BigDecimal forcedMinutes=null) {
         checkHealth(displayWarnings=false)
         Integer mbe = maxEventMinutes(forcedMinutes=forcedMinutes)
         if(checkinIsRecent(maximumMinutesBetweenEvents=mbe, displayWarnings=false) == true) {
-            ifhealthWarningsOn() log.warn("Event interval normal, recovery mode DEACTIVATED!")
+            if(healthWarningsOn()) log.warn("Event interval normal, recovery mode DEACTIVATED!")
             unschedule('recoveryEvent')
             unschedule('reconnectEvent')
         }
@@ -755,7 +755,7 @@ void forceRecoveryMode(BigDecimal minutes) {
         disableForcedRecoveryMode()
     } else if(checkinIsRecent(maximumMinutesBetweenEvents=minutesI) == false) {
         recoveryMode = recoveryMode == null ? "Normal" : recoveryMode
-        ifhealthWarningsOn() log.warn("Forced recovery mode ($recoveryMode) ACTIVATED!")
+        if(healthWarningsOn()) log.warn("Forced recovery mode ($recoveryMode) ACTIVATED!")
         state.forcedMinutes = minutes
         runIn(minutesI * 60, 'disableForcedRecoveryMode')
         scheduleRecovery(forcedMinutes=minutes)
@@ -768,7 +768,7 @@ void disableForcedRecoveryMode() {
     state.forcedMinutes = 0
     unschedule('recoveryEvent')
     unschedule('reconnectEvent')
-    ifhealthWarningsOn() log.warn("Forced recovery mode DEACTIVATED!")
+    if(healthWarningsOn()) log.warn("Forced recovery mode DEACTIVATED!")
 }
 
 void scheduleLogsOff(boolean noLogWarning=false) {
@@ -907,7 +907,7 @@ boolean healthWarningsOn() {
 }
 
 void resetRestoredCounter() {
-    logging("resetRestoredCounter()", 100)
+    logging("resetRestoredCounter()", 1)
     sendEvent(name: "restoredCounter", value: 0, descriptionText: "Reset restoredCounter to 0")
 }
 
@@ -946,6 +946,15 @@ void migrateFromPresence() {
     }
     deleteState("presence")
     deleteState("notPresentCounter")
+}
+
+// The 1.x health check was scheduled under this name. HPM updates the code
+// without calling updated(), so that schedule keeps firing until the user
+// saves preferences. Run the migration from here so the device switches itself
+// over to checkHealth.
+void checkPresence() {
+    migrateFromPresence()
+    configureHealthCheck()
 }
 
 void deleteState(String attribute) {

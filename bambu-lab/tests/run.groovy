@@ -41,6 +41,15 @@ abstract class HubStub extends Script {
                          publish: { String t, String p, int q, boolean r -> self.published << p }]]
   }
 }''')
+// Records every write, even one that stores the value already there: on the hub,
+// assigning to state is what costs a database write
+gcl.parseClass('''
+class WriteLog extends LinkedHashMap {
+  List writes = []
+  WriteLog(Map m) { super(m) }
+  Object put(Object k, Object v) { writes << k; super.put(k, v) }
+  Object remove(Object k) { writes << k; super.remove(k) }
+}''')
 def shell = new GroovyShell(gcl, new Binding(), new CompilerConfiguration(scriptBaseClass: 'HubStub'))
 def driverFile = new File(args[0])
 String filter = args.length > 1 ? args[1] : ""
@@ -229,6 +238,50 @@ test("state: an unchanged AMS report doesn't rewrite state.amsCache") {
   def first = d.state.amsCache
   send(d, fullReport("RUNNING", 0))
   [d.state.amsCache.is(first), "rewritten"]
+}
+
+// An idle printer repeats its full report too; the repeats should cost nothing
+def idleReport = { Map more = [:] ->
+  fullReport("IDLE", 0, [mc_percent: 0, nozzle_temper: 24.6, bed_temper: 23.9, wifi_signal: "-52dBm",
+                         spd_lvl: 2, spd_mag: 100, mc_print_error_code: "0"] + more)
+}
+
+test("events: a repeated report sends nothing new") {
+  def d = fresh()
+  send(d, idleReport()); int after = d.events.size()
+  10.times { d.advance(1000); send(d, idleReport()) }
+  [d.events.size() == after, d.events.drop(after)]
+}
+
+test("events: a changed value is still sent") {
+  def d = fresh()
+  send(d, idleReport()); d.advance(1000)
+  send(d, idleReport(bed_temper: 31.2))
+  [named(d, "bedTemp") == [24L, 31L], named(d, "bedTemp")]
+}
+
+test("events: an idle printer after a print still resets the elapsed time") {
+  def d = fresh()
+  send(d, [gcode_state: "IDLE"])
+  send(d, [gcode_state: "RUNNING"]); minutes(d, 12)
+  send(d, [gcode_state: "FINISH"])
+  send(d, [gcode_state: "IDLE"])
+  [d.attrs.printElapsed == "—", named(d, "printElapsed")]
+}
+
+test("state: a repeated idle report writes nothing to state") {
+  def d = fresh()
+  send(d, idleReport())
+  def watched = gcl.loadClass("WriteLog").newInstance(d.state)
+  d.state = watched
+  5.times { d.advance(1000); send(d, idleReport()) }
+  [watched.getWrites().isEmpty(), watched.getWrites()]
+}
+
+test("wifiSignal: a changing signal is sent at most every 5 minutes") {
+  def d = fresh()
+  600.times { i -> d.advance(1000); send(d, idleReport(wifi_signal: "-${50 + i % 5}dBm")) }
+  [named(d, "wifiSignal").size() == 2, named(d, "wifiSignal")]
 }
 
 // ── Full-status requests ─────────────────────────────────────────────────

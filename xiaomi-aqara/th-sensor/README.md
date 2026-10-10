@@ -110,6 +110,15 @@ The off-hub tests load the driver into a small stand-in for the Hubitat sandbox 
 
 ## Changelog
 
+### v2.0.2 — 2026-10-09
+
+- Fixed: Recovery Mode switched itself off the first time a sensor came back after missing check-ins, logging "Stopping Recovery feature due to Platform bug!". There was no platform bug; a typo in 2.0.0 broke the "recovery mode DEACTIVATED" warning, and the error it threw turned the feature off. **Force Recovery Mode** hit the same error. If you saw that warning, set **Recovery Mode** back to Normal (or your choice) and click **Save Preferences**
+- Fixed: sensors upgraded from 1.x through HPM logged a `checkPresence()` error every 3 hours, and their health check never ran, until preferences were saved. The leftover 1.x schedule now switches the device over to the new health check by itself
+
+### v2.0.1 — 2026-10-09
+
+- Quieter logs: raw Zigbee messages (`msgMap`, the hourly check-in data, multistate events) and internal method traces now log only with **Enable debug logging** on. With info logging, you still see readable lines such as temperature, humidity and pressure changes
+
 ### v2.0.0 — 2026-10-08
 
 **Breaking:** the sensor is no longer a presence sensor. Whether it is still reporting is now shown by `healthStatus` (`online` / `offline`), the attribute Hubitat uses for device health. A thermometer no longer appears in presence pickers, so it can't count toward "everyone left" in Mode Manager or a presence rule by mistake.

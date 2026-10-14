@@ -154,7 +154,7 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 |---|---|---|
 | `connectionStatus` | string | `connected` · `disconnected` |
 | `printerState` | string | `IDLE` · `PREPARE` · `RUNNING` · `PAUSE` · `FINISH` · `FAILED` |
-| `printFile` | string | Current print job filename |
+| `printFile` | string | Current print job filename, or `—` when there is none |
 | `printProgress` | number | Progress 0–100% |
 | `printElapsed` | string | Elapsed print time (H:MM, tracked locally, updated every minute). A finished or failed print keeps its time until the next print starts |
 | `remainingTime` | number | Estimated minutes remaining |
@@ -173,9 +173,9 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 | `amsTrayNow` | number | Active tray global index (255 = none / external spool) |
 | `chamberLight` | string | Chamber light state: `on` · `off` (read-only) |
 | `printError` | string | Error code (`"0"` = no error) |
-| `wifiSignal` | string | WiFi signal strength; updated at most every 5 minutes |
-| `cameraUrl` | string | RTSP stream URL |
-| `lastUpdate` | string | ISO-8601 UTC timestamp of last MQTT data; updated once a minute and on state changes |
+| `wifiSignal` | string | WiFi signal strength; updated at most every 5 minutes (`—` until first reported) |
+| `cameraUrl` | string | RTSP stream URL (`—` until first reported) |
+| `lastUpdate` | string | ISO-8601 UTC timestamp of last MQTT data; updated once a minute and on state changes (`—` until the first message) |
 | `html` | string | iframe stub for the combined dashboard tile |
 | `htmlAms` | string | iframe stub for the standalone AMS tile |
 | `driverVersion` | string | Installed driver version |

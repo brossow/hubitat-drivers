@@ -22,6 +22,7 @@ import groovy.json.JsonOutput
 // amsSummary with no AMS connected. Not "": the hub drops an event whose value is an
 // empty string, so an AMS that went away would stay on the device.
 @Field static final String AMS_NONE      = "none"
+@Field static final String NO_VALUE      = "—"      // the same goes for every other string attribute
 @Field static final long   LAST_UPDATE_EVERY_MS = 60000L
 @Field static final long   WIFI_SIGNAL_EVERY_MS = 300000L
 
@@ -351,8 +352,8 @@ private void _processPayload(Map json) {
 
     // ── File ───────────────────────────────────────────────────
     if (p.containsKey("subtask_name") || p.containsKey("gcode_file")) {
-        String f = ((p.subtask_name ?: p.gcode_file) ?: "") as String
-        _send("printFile", f.tokenize("/").last() ?: "")
+        List parts = (((p.subtask_name ?: p.gcode_file) ?: "") as String).tokenize("/")
+        _send("printFile", parts ? parts.last() : NO_VALUE)
     }
 
     // ── Temperatures ───────────────────────────────────────────
@@ -565,10 +566,10 @@ private void _initAttributes() {
     sendEvent(name: "amsTrayNow",       value: 255)
     sendEvent(name: "chamberLight",     value: "off")
     sendEvent(name: "printError",       value: "0")
-    sendEvent(name: "wifiSignal",       value: "")
-    sendEvent(name: "cameraUrl",        value: "")
-    sendEvent(name: "lastUpdate",       value: "")
-    sendEvent(name: "printFile",        value: "")
+    sendEvent(name: "wifiSignal",       value: NO_VALUE)
+    sendEvent(name: "cameraUrl",        value: NO_VALUE)
+    sendEvent(name: "lastUpdate",       value: NO_VALUE)
+    sendEvent(name: "printFile",        value: NO_VALUE)
 }
 
 // Sends the event unless it repeats the last value sent for that attribute. The

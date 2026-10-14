@@ -237,7 +237,7 @@ def onPrinterStateChange(evt) {
 
     if (next == "RUNNING" && prev != "RUNNING") {
         if (notifyOnStart) {
-            String f = printerDevice.currentValue("printFile") ?: "unknown file"
+            String f = _printFile() ?: "unknown file"
             _notify("Bambu printer started: ${f}")
         }
         _automate("start")
@@ -245,7 +245,7 @@ def onPrinterStateChange(evt) {
 
     if (next == "FINISH" && prev in ["RUNNING", "PAUSE"]) {
         if (notifyOnFinish) {
-            String f = printerDevice.currentValue("printFile")    ?: "unknown file"
+            String f = _printFile()                               ?: "unknown file"
             String e = printerDevice.currentValue("printElapsed") ?: "—"
             _notify("Bambu printer finished: ${f} (${e})")
         }
@@ -321,7 +321,7 @@ private String _buildCombinedPage() {
     def remaining = (printerDevice?.currentValue("remainingTime")    ?: 0)          as int
     def curLayer  = (printerDevice?.currentValue("currentLayer")     ?: 0)          as int
     def totLayer  = (printerDevice?.currentValue("totalLayers")      ?: 0)          as int
-    def file      = (printerDevice?.currentValue("printFile")        ?: "")         as String
+    def file      = (_printFile()                                    ?: "")         as String
     def nozzle    = (printerDevice?.currentValue("nozzleTemp")       ?: 0)          as double
     def nozzleTgt = (printerDevice?.currentValue("nozzleTargetTemp") ?: 0)          as double
     def bed       = (printerDevice?.currentValue("bedTemp")          ?: 0)          as double
@@ -341,7 +341,7 @@ private String _buildCombinedPage() {
     def hasResult = state_ in ["FINISH", "FAILED"]
     def color     = _stateColor(state_, th)
     def label     = _stateLabel(state_)
-    def timeOnly  = updated.contains("T") ? updated.split("T")[1].replace("Z","") : updated
+    def timeOnly  = updated.contains("T") ? updated.split("T")[1].replace("Z","") + " UTC" : "—"
 
     // Error banner
     def errorDiv = (error != "0")
@@ -420,7 +420,7 @@ ${_amsCss()}
 </style></head><body>
 <div class='state' style='color:${color}'>${label}</div>
 ${fileDiv}${errorDiv}${progressDiv}${tempsDiv}${infoRowDiv}${amsHtml}
-<div class='foot'>${footLeft}<span id='ts'>${timeOnly} UTC</span></div>
+<div class='foot'>${footLeft}<span id='ts'>${timeOnly}</span></div>
 <script>(function(){try{var d=new Date('${updated}');if(isNaN(d.getTime()))return;var n=new Date(),same=d.toDateString()===n.toDateString(),fmt={month:'short',day:'numeric'};document.getElementById('ts').textContent=same?d.toLocaleTimeString():d.toLocaleDateString(undefined,fmt)+' '+d.toLocaleTimeString();}catch(e){}})();(function(){function fR(){document.querySelectorAll('.row').forEach(function(r){var gw=parseFloat(getComputedStyle(r).columnGap)||4;r.style.gridTemplateColumns=r.offsetWidth+gw>=4*(38+gw)?'repeat(4,1fr)':'repeat(2,1fr)';});}function fU(g){var n=g.children.length,gw=parseFloat(getComputedStyle(g).columnGap)||10,max=Math.min(n,Math.max(1,Math.floor((g.offsetWidth+gw)/(140+gw)))),best=1,bs=n;for(var c=1;c<=max;c++){var s=n%c===0?0:c-n%c;if(s<bs||(s===bs&&c>best)){bs=s;best=c;}}g.style.gridTemplateColumns='repeat('+best+',1fr)';}var g=document.querySelector('.ams-body'),am=g&&!g.style.gridTemplateColumns;if(am)fU(g);requestAnimationFrame(fR);var rf;if(window.ResizeObserver){new ResizeObserver(function(){cancelAnimationFrame(rf);rf=requestAnimationFrame(function(){if(am)fU(g);requestAnimationFrame(fR);});}).observe(document.body);}else window.addEventListener('resize',function(){if(am)fU(g);requestAnimationFrame(fR);});})();</script>
 </body></html>"""
 }
@@ -433,7 +433,7 @@ private String _buildAmsPage() {
     def trayNow  = (printerDevice?.currentValue("amsTrayNow")  ?: 255) as int
     def updated  = (printerDevice?.currentValue("lastUpdate")  ?: "") as String
     def connStatus = (printerDevice?.currentValue("connectionStatus") ?: "disconnected") as String
-    def timeOnly = updated.contains("T") ? updated.split("T")[1].replace("Z","") : updated
+    def timeOnly = updated.contains("T") ? updated.split("T")[1].replace("Z","") + " UTC" : "—"
     def content  = _amsBodyHtml(summary, trayNow)
     def connColor = connStatus == "connected" ? _theme(tileTheme ?: "dark").stateRunning : _theme(tileTheme ?: "dark").stateFailed
 
@@ -451,7 +451,7 @@ ${_amsCss()}
 </style></head><body>
 <div class='heading'>AMS Filament</div>
 <div class='ams-scroll'>${content}</div>
-<div class='foot'><span style='color:${connColor}'>&#11044;</span><span id='ts'>${timeOnly} UTC</span></div>
+<div class='foot'><span style='color:${connColor}'>&#11044;</span><span id='ts'>${timeOnly}</span></div>
 <script>(function(){try{var d=new Date('${updated}');if(isNaN(d.getTime()))return;var n=new Date(),same=d.toDateString()===n.toDateString(),fmt={month:'short',day:'numeric'};document.getElementById('ts').textContent=same?d.toLocaleTimeString():d.toLocaleDateString(undefined,fmt)+' '+d.toLocaleTimeString();}catch(e){}})();(function(){function fR(){document.querySelectorAll('.row').forEach(function(r){var gw=parseFloat(getComputedStyle(r).columnGap)||4;r.style.gridTemplateColumns=r.offsetWidth+gw>=4*(38+gw)?'repeat(4,1fr)':'repeat(2,1fr)';});}function fU(g){var n=g.children.length,gw=parseFloat(getComputedStyle(g).columnGap)||10,max=Math.min(n,Math.max(1,Math.floor((g.offsetWidth+gw)/(140+gw)))),best=1,bs=n;for(var c=1;c<=max;c++){var s=n%c===0?0:c-n%c;if(s<bs||(s===bs&&c>best)){bs=s;best=c;}}g.style.gridTemplateColumns='repeat('+best+',1fr)';}var g=document.querySelector('.ams-body'),am=g&&!g.style.gridTemplateColumns;if(am)fU(g);requestAnimationFrame(fR);var rf;if(window.ResizeObserver){new ResizeObserver(function(){cancelAnimationFrame(rf);rf=requestAnimationFrame(function(){if(am)fU(g);requestAnimationFrame(fR);});}).observe(document.body);}else window.addEventListener('resize',function(){if(am)fU(g);requestAnimationFrame(fR);});})();</script>
 </body></html>"""
 }
@@ -560,6 +560,12 @@ private String _fmtError(String code) {
         if (n > 0) return "0x${String.format('%08X', n)}"
     } catch (ignored) { }
     return code
+}
+
+// The driver reports "—" when there's no file
+private String _printFile() {
+    String f = printerDevice?.currentValue("printFile") as String
+    return (f && f != "—") ? f : null
 }
 
 private String _esc(String s) {

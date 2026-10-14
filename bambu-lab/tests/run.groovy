@@ -214,6 +214,26 @@ test("ams: removing every unit reports none, not an empty string") {
   [d.attrs.amsSummary == "none" && d.state.amsCache == [:], d.attrs.amsSummary]
 }
 
+test("printFile: a cleared file name reports —, not an empty string") {
+  def d = fresh()
+  send(d, [gcode_state: "RUNNING", subtask_name: "benchy"])
+  send(d, [gcode_state: "IDLE", subtask_name: "", gcode_file: ""])
+  [d.attrs.printFile == "—", d.attrs.printFile]
+}
+
+test("printFile: an empty file name doesn't stop the rest of the message") {
+  def d = fresh()
+  send(d, [subtask_name: "", nozzle_temper: 215.2])
+  [d.attrs.nozzleTemp == 215L, d.attrs.nozzleTemp]
+}
+
+test("install: no attribute starts as an empty string") {
+  def d = fresh()
+  d.installed()
+  def empty = d.events.findAll { it.value == "" }*.name
+  [empty.isEmpty(), empty]
+}
+
 test("ams: 0% remaining is reported as 0%, not unknown") {
   def d = fresh()
   send(d, fullReport("RUNNING", 0))

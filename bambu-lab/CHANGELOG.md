@@ -24,7 +24,8 @@ Initial release.
 - Full status requested every 5 minutes by default (300 s minimum); live updates arrive in between
 - `lastUpdate` is refreshed once a minute and on state changes, rather than with every message
 - Light on the hub while idle: the printer repeats its full status about once a second, idle or printing, and a repeated value now sends no event and writes nothing to state. `wifiSignal`, which moves a dBm or two between reports, is sent at most every 5 minutes
-- `amsSummary` reads `none` when no AMS is connected, so removing an AMS clears it from the device and tiles (the hub drops an event whose value is an empty string)
+- No attribute is ever set to an empty string, which the hub drops, leaving the old value in place: `amsSummary` reads `none` when no AMS is connected, so removing an AMS clears it from the device and tiles, and `printFile`, `wifiSignal`, `cameraUrl` and `lastUpdate` read `—` when there's nothing to show
+- A message with an empty file name no longer stops the rest of that message being processed
 - Optional MQTT relay support for hubs where the direct TLS connection does not work
 - Dark and light tile themes; AMS column layout control
 - `refresh()` / `connect()` / `disconnect()` commands

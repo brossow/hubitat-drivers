@@ -326,4 +326,4 @@ test("refresh: asks for pushall on the request topic") {
 }
 
 println(ran == 0 ? "no tests match '$filter'" : failures ? "$failures of $ran FAILED" : "all $ran passed")
-System.exit(failures || ran == 0 ? 1 : 0)
+System.exit(failures ? 1 : ran == 0 ? 3 : 0)   // 3: nothing matched the filter

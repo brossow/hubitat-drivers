@@ -144,6 +144,10 @@ Shows:
 
 Same AMS content, served independently. Useful for wide layouts with status and filament on separate tiles side by side.
 
+### How the tiles load
+
+The `html` and `htmlAms` attributes don't hold the tile itself. Each holds a small iframe pointing at the app's endpoint on your hub, e.g. `http://<hub IP>/apps/api/<app id>/tile?access_token=…`, and the dashboard loads the live page from there. The app writes these when it's installed, when you click **Done**, and when you open its page. It also re-checks them every hour and a minute after each hub restart, so they follow the hub to a new address. A check that finds nothing changed sends no event and writes nothing.
+
 ---
 
 ## Device attributes
@@ -195,6 +199,11 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 - If a field is still blank a few minutes after connecting, click **Refresh** on the device to request a full report now
 - The driver watches for prolonged silence from the printer and triggers an automatic full reconnect when it detects a stale connection
 
+**Tiles went blank after the hub's IP address changed**
+- The tile URLs contain the hub's address (see [How the tiles load](#how-the-tiles-load)). The app re-points them a minute after the hub restarts and checks hourly in between, so they should come back on their own within an hour
+- To fix it straight away, open **Apps → Bambu Lab Printer** and click **Done**
+- If you updated the app code from a version before this check existed, click **Done** once after updating so the restart and hourly checks get set up
+
 **Dashboard tiles are blank when viewing remotely**
 - The tile `src` URLs point to your hub's local IP. They only load when your browser can reach that address directly — on your local network, or over a VPN. Hubitat cloud dashboard relay will show blank iframes. This is a known limitation of the iframe tile architecture.
 
@@ -232,7 +241,7 @@ tests/run.sh               # everything
 tests/run.sh ams           # only tests whose name contains "ams"
 ```
 
-The off-hub tests load the driver into a small stand-in for the Hubitat sandbox, feed it printer messages (full X1C-style reports and P1-style partial ones) with a clock the tests control, and check the events it sends. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
+The off-hub tests load the driver into a small stand-in for the Hubitat sandbox, feed it printer messages (full X1C-style reports and P1-style partial ones) with a clock the tests control, and check the events it sends. The app tests do the same for the companion app, moving the hub to a new address and checking that the tiles follow it. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
 
 ---
 

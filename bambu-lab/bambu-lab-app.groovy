@@ -174,6 +174,11 @@ def uninstalled() {
 
 private void initialize() {
     _pushStubs()
+    // The stubs hold the hub's IP address, so re-check them after a restart (which is
+    // when a new static address takes effect) and hourly (a DHCP lease can change
+    // without one). A check that finds nothing changed writes nothing.
+    subscribe(location, "systemStart", "onSystemStart")
+    schedule("0 ${new Random().nextInt(60)} * * * ?", "refreshTileStubs")
     if (!printerDevice) return
 
     subscribe(printerDevice, "printerState", "onPrinterStateChange")
@@ -209,12 +214,27 @@ def handlePing() {
 
 // ── Stub management ────────────────────────────────────────────────────────────
 
-private void _pushStubs() {
+def onSystemStart(evt) {
+    // Give the network a minute to come up before reading the hub's address
+    runIn(60, "refreshTileStubs")
+}
+
+def refreshTileStubs() {
+    _pushStubs(false)
+}
+
+// force: push even if nothing has changed (install, Done, opening the app page)
+private void _pushStubs(boolean force = true) {
     if (!state.accessToken) return
     String base  = "${getLocalApiServerUrl()}/${app.id}"
     String token = state.accessToken
-    state.tileStub    = _iframe("${base}/tile?access_token=${token}")
-    state.amsTileStub = _iframe("${base}/ams-tile?access_token=${token}")
+    String tile    = _iframe("${base}/tile?access_token=${token}")
+    String amsTile = _iframe("${base}/ams-tile?access_token=${token}")
+    if (!force && tile == state.tileStub && amsTile == state.amsTileStub &&
+        (!printerDevice || printerDevice.currentValue("html") == tile)) return
+    if (tile != state.tileStub && state.tileStub) log.info "Hub address changed; tile URLs now use ${base}"
+    state.tileStub    = tile
+    state.amsTileStub = amsTile
     if (printerDevice) {
         try {
             printerDevice.setTileStubs(state.tileStub, state.amsTileStub)

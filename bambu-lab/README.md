@@ -169,7 +169,7 @@ All attributes are exposed as standard Hubitat device state and available in Rul
 | `speedMagnitude` | number | Speed percentage |
 | `filamentType` | string | Active tray material (e.g. PLA, PETG) |
 | `filamentColor` | string | Active tray color (#RRGGBB) |
-| `amsSummary` | string | Compact AMS summary (e.g. `A0T0:PLA/FF0000/75%`) |
+| `amsSummary` | string | Compact AMS summary (e.g. `A0T0:PLA/FF0000/75%`), or `none` when no AMS is connected |
 | `amsTrayNow` | number | Active tray global index (255 = none / external spool) |
 | `chamberLight` | string | Chamber light state: `on` · `off` (read-only) |
 | `printError` | string | Error code (`"0"` = no error) |

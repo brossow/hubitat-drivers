@@ -205,6 +205,15 @@ test("ams: a unit missing from ams_exist_bits is dropped") {
   [!d.attrs.amsSummary.contains("A1T"), d.attrs.amsSummary]
 }
 
+// The hub drops an event whose value is an empty string, so a summary that went
+// empty would leave the last AMS on the device for good
+test("ams: removing every unit reports none, not an empty string") {
+  def d = fresh()
+  send(d, fullReport("IDLE", 255))
+  send(d, [ams: [ams_exist_bits: "0", tray_now: "255", ams: []]])
+  [d.attrs.amsSummary == "none" && d.state.amsCache == [:], d.attrs.amsSummary]
+}
+
 test("ams: 0% remaining is reported as 0%, not unknown") {
   def d = fresh()
   send(d, fullReport("RUNNING", 0))

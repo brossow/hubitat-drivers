@@ -19,6 +19,9 @@ import groovy.json.JsonOutput
 @Field static final Map    SPEED_LABELS = [1: "Quiet", 2: "Standard", 3: "Sport", 4: "Ludicrous"]
 @Field static final int    TRAY_EXTERNAL = 254   // tray_now: printing from the external spool
 @Field static final int    TRAY_NONE     = 255   // tray_now: nothing loaded
+// amsSummary with no AMS connected. Not "": the hub drops an event whose value is an
+// empty string, so an AMS that went away would stay on the device.
+@Field static final String AMS_NONE      = "none"
 @Field static final long   LAST_UPDATE_EVERY_MS = 60000L
 @Field static final long   WIFI_SIGNAL_EVERY_MS = 300000L
 
@@ -70,7 +73,7 @@ metadata {
         attribute "filamentColor",     "string"   // #RRGGBB
 
         // AMS
-        attribute "amsSummary",        "string"   // A0T0:PLA/FF0000/75%, …
+        attribute "amsSummary",        "string"   // A0T0:PLA/FF0000/75%, … or "none"
         attribute "amsTrayNow",        "number"   // global tray index; 255 = none / external spool
 
         // Other
@@ -476,7 +479,7 @@ private String _amsSummary(Map cache) {
             parts << "A${uid}T${tid}:${mtype}/${color}/${pct}"
         }
     }
-    return parts.join(", ")
+    return parts ? parts.join(", ") : AMS_NONE
 }
 
 private void _storeVtTray(def vt) {
@@ -558,7 +561,7 @@ private void _initAttributes() {
     sendEvent(name: "speedMagnitude",   value: 100,  unit: "%")
     sendEvent(name: "filamentType",     value: "—")
     sendEvent(name: "filamentColor",    value: "#000000")
-    sendEvent(name: "amsSummary",       value: "")
+    sendEvent(name: "amsSummary",       value: AMS_NONE)
     sendEvent(name: "amsTrayNow",       value: 255)
     sendEvent(name: "chamberLight",     value: "off")
     sendEvent(name: "printError",       value: "0")

@@ -28,6 +28,7 @@ abstract class HubStub extends Script {
   long now() { clock }
   // A method, not d.clock += …: assigning a property on a Script writes to its binding
   void advance(long ms) { clock += ms }
+  void useState(Map m) { state = m }
   void sendEvent(Map m) { events << m; attrs[m.name] = m.value }
   void runIn(def s, String h) {}
   void runEvery1Minute(String h) {}
@@ -302,7 +303,7 @@ test("state: a repeated idle report writes nothing to state") {
   def d = fresh()
   send(d, idleReport())
   def watched = gcl.loadClass("WriteLog").newInstance(d.state)
-  d.state = watched
+  d.useState(watched)
   5.times { d.advance(1000); send(d, idleReport()) }
   [watched.getWrites().isEmpty(), watched.getWrites()]
 }
@@ -323,6 +324,15 @@ test("refresh: asks for pushall on the request topic") {
   def d = fresh()
   d.refresh()
   [d.published.size() == 1 && d.published[0].contains('"command":"pushall"'), d.published]
+}
+
+// ── The harness itself ───────────────────────────────────────────────────
+
+// Runs last on purpose: an earlier test that swapped in a WriteLog by assigning
+// d.state would have put it in the shared binding, where every later device reads it
+test("harness: a new device starts with its own empty state") {
+  def d = fresh()
+  [d.state.isEmpty(), d.state.keySet()]
 }
 
 println(ran == 0 ? "no tests match '$filter'" : failures ? "$failures of $ran FAILED" : "all $ran passed")

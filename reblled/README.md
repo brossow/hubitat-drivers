@@ -1,6 +1,6 @@
 # ReBLLED LED Controller — Hubitat Driver
 
-Live status and control for a [ReBLLED](https://github.com/brossow/ReBLLED) controller: the alternative firmware for the BLLED LED controller that lights a Bambu Lab printer's chamber from the printer's local MQTT. The driver shows what the strip is showing and why, the printer status the controller knows (printing, paused, finished, door, chamber light, errors), and switches the strip and sets its brightness.
+Live status and control for a [ReBLLED](https://github.com/brossow/ReBLLED) controller: the alternative firmware for the [BLLED LED controller](https://www.dutchdevelop.com/blled) that lights a Bambu Lab printer's chamber from the printer's local MQTT. The driver shows what the strip is showing and why, the printer status the controller knows (printing, paused, finished, door, chamber light, errors), and switches the strip and sets its brightness.
 
 It talks only to the controller on your network, never to the printer or the cloud. For full printer details (temperatures, AMS, progress), use a printer driver alongside it.
 

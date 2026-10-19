@@ -6,7 +6,7 @@
   "dateReleased": "2026-10-19",
   "releaseNotes": "Initial release. Live status from a ReBLLED controller over its web socket (what the strip shows and why, printer status, door, chamber light, attention needed, finished prints), plus on/off, Always on and brightness through its JSON API.",
   "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/reblled",
-  "communityLink": "",
+  "communityLink": "https://community.hubitat.com/t/release-reblled-led-controller-status-and-control-for-blled-chamber-lights-on-bambu-lab-printers/166906",
   "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/reblled/LICENSE",
   "drivers": [
     {

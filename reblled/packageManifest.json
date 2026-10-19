@@ -1,0 +1,21 @@
+{
+  "packageName": "ReBLLED LED Controller",
+  "minimumHEVersion": "2.3.0",
+  "author": "brossow",
+  "version": "1.0.0",
+  "dateReleased": "2026-10-19",
+  "releaseNotes": "Initial release. Live status from a ReBLLED controller over its web socket (what the strip shows and why, printer status, door, chamber light, attention needed, finished prints), plus on/off, Always on and brightness through its JSON API.",
+  "documentationLink": "https://github.com/brossow/hubitat-drivers/tree/main/reblled",
+  "communityLink": "",
+  "licenseFile": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/reblled/LICENSE",
+  "drivers": [
+    {
+      "id": "df5d170c-95c4-4d51-b641-792d95bb3593",
+      "name": "ReBLLED LED Controller",
+      "namespace": "brossow",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/reblled/reblled-controller.groovy",
+      "required": true,
+      "primaryType": "Driver"
+    }
+  ]
+}

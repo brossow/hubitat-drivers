@@ -1,0 +1,30 @@
+name: ReBLLED LED Controller tests
+
+on:
+  push:
+    paths:
+      - 'reblled/**'
+      - 'tools/groovy-jar.sh'
+      - '.github/workflows/reblled-tests.yml'
+  pull_request:
+    paths:
+      - 'reblled/**'
+      - 'tools/groovy-jar.sh'
+      - '.github/workflows/reblled-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      # Groovy 2.4, the line the hub runs, wants Java 8.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Off-hub tests
+        run: reblled/tests/run.sh

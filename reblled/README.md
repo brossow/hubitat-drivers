@@ -17,7 +17,7 @@ Status should appear within a few seconds. Give the controller a fixed address (
 
 ### Login (only for control)
 
-Status comes over the controller's web socket, which needs no login. Switching the strip and changing brightness go through its JSON API, which asks for the WebUI login if you set one under **Update → WebUI login** on the controller. Enter the same user name and password in the driver's Preferences. Without a login on the controller, leave them blank.
+Status comes over the controller's web socket, which needs no login. Switching the strip and changing brightness go through its JSON API, which asks for the WebUI login if you set one on the controller's **Wi-Fi and login** page (under **More** on its main page, tick **Require a login for these pages**). Enter the same user name and password in the driver's Preferences. Without a login on the controller, leave them blank.
 
 ## How it works
 

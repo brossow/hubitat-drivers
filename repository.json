@@ -28,6 +28,14 @@
       "tags": ["Cloud", "Weather", "Temperature & Humidity"]
     },
     {
+      "id": "df5d170c-95c4-4d51-b641-792d95bb3593",
+      "name": "ReBLLED LED Controller",
+      "category": "Integrations",
+      "location": "https://raw.githubusercontent.com/brossow/hubitat-drivers/main/reblled/packageManifest.json",
+      "description": "Live status and control for ReBLLED, alternative firmware for the BLLED LED controller in Bambu Lab printers: strip state, printer status, door and chamber light, on/off and brightness.",
+      "tags": ["LAN", "Lights & Switches", "Monitoring"]
+    },
+    {
       "id": "978f896a-dbae-408f-858b-1bace96468a6",
       "name": "Rheem EcoNet",
       "category": "Integrations",

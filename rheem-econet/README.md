@@ -18,7 +18,8 @@ Each driver is self-contained — no parent app required.
 | Thermostat: cool, heat, auto (heating and cooling), fan only, idle | Verified |
 | Thermostat: several thermostats on one account | Verified by a community user |
 | Thermostat: zoned systems | Not yet tested — reports welcome |
-| Water heater | **Not yet tested on any real water heater** — reports welcome |
+| Water heater: heat pump (modes, setpoint, on/off) | Verified by a community user |
+| Water heater: gas, tankless and electric-only units | Not yet tested — reports welcome |
 
 ---
 
@@ -189,7 +190,7 @@ In auto mode the thermostat itself decides when to start heating or cooling, and
 ### Supported Modes
 `off` · `electric` · `energy saving` · `heat pump` · `high demand` · `gas` · `performance` · `vacation`
 
-Not all modes are available on every device — the `supportedWaterHeaterModes` attribute reflects what the device actually reports.
+Not all modes are available on every device — the `supportedWaterHeaterModes` attribute reflects what the device actually reports. The **Set Water Heater Mode** dropdown always lists every mode above, because Hubitat fixes a command's options for the whole driver and can't narrow them per device. Choosing a mode your heater doesn't offer does nothing to the heater; the driver refuses it and logs an error naming the modes it does offer.
 
 ### Capabilities
 `Switch` · `ThermostatHeatingSetpoint` · `ThermostatOperatingState` · `ThermostatMode` · `Refresh` · `Initialize`

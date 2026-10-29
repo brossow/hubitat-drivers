@@ -23,11 +23,12 @@ class FakeEcoNet {
     Exception pollError = null         // thrown by polls only, e.g. a timeout once logged in
     boolean pollUnsuccessful = false   // 200 with success=false
 
-    // Energy usage (dynamicAction). null = the endpoint isn't expected to be called.
-    Map energyUsage = null              // results.energy_usage
-    boolean energySupported = true      // false → success=false, as for a unit without the report
-    Integer energyStatus = null
-    List<Map> energyRequests = []       // decoded request bodies
+    // Usage Report (dynamicAction): usage_type → day ("yyyy-MM-dd") → [hour: value].
+    // A usage_type with no entry answers success=false, as for a unit without that report.
+    Map usage = [:]
+    Map usageMessages = [energyUsage: "Energy Usage in kWh", waterUsage: "Water Usage in gallons"]
+    Integer usageStatus = null
+    List<Map> usageRequests = []       // decoded request bodies
 
     int authCalls = 0
     int pollCalls = 0
@@ -54,11 +55,16 @@ class FakeEcoNet {
             return resp(200, [success: true, results: [locations: locations]])
         }
         if (uri.contains("/dynamicAction")) {
-            energyRequests << (new JsonSlurper().parseText(params.body as String) as Map)
-            if (energyStatus) throw new HttpResponseException(energyStatus)
-            if (!energySupported) return resp(200, [success: false])
-            if (energyUsage == null) throw new IllegalStateException("energy usage requested but not scripted")
-            return resp(200, [success: true, results: [energy_usage: energyUsage]])
+            def body = new JsonSlurper().parseText(params.body as String) as Map
+            usageRequests << body
+            if (usageStatus) throw new HttpResponseException(usageStatus)
+            String type = body.usage_type
+            if (!usage.containsKey(type)) return resp(200, [success: false])
+            String day = (body.start_date as String).substring(0, 10)
+            def hours = (usage[type][day] ?: [:]) as Map
+            def data = hours.collect { h, v -> [name: h.toString(), value: v] }
+            String key = type == "energyUsage" ? "energy_usage" : "water_usage"
+            return resp(200, [success: true, results: [(key): [data: data, historyData: [], message: usageMessages[type]]]])
         }
         if (uri.contains("/publish")) {
             if (publishStatus) throw new HttpResponseException(publishStatus)

@@ -18,6 +18,9 @@ attribute leakSensor enum [connected, not connected]
 attribute shutoffValve enum [open, closed]
 attribute tankHealth number
 attribute compressorHealth number
+attribute energyLast24Hours number
+attribute waterUsageToday number
+attribute waterUsageLast24Hours number
 command setWaterHeaterMode [Mode:ENUM[off, electric, energy saving, heat pump, high demand, gas, performance, vacation]]
 command setAwayMode [Away Mode:ENUM[away, home]]
 input email text required

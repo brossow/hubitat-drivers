@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.5.0-beta.2
+ * Version: 0.5.0-beta.3
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -50,6 +50,10 @@ metadata {
         attribute "shutoffValve",              "enum", ["open", "closed"]
         attribute "tankHealth",                "number"   // % — "Element Health" in the app on heat pump units
         attribute "compressorHealth",          "number"   // % — heat pump units only
+        // Usage Report. energy (EnergyMeter) is today's kWh; these are the rest.
+        attribute "energyLast24Hours",         "number"   // kWh
+        attribute "waterUsageToday",           "number"   // gallons
+        attribute "waterUsageLast24Hours",     "number"   // gallons
 
         command "setWaterHeaterMode", [[
             name: "Mode", type: "ENUM",
@@ -82,7 +86,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.5.0-beta.2"
+@Field String DRIVER_VERSION = "0.5.0-beta.3"
 @Field String LOG_TAG        = "EcoNet WH"
 @Field String UNIT_NOUN      = "water heater"
 @Field String UNIT_TITLE     = "Water heater"
@@ -186,13 +190,11 @@ void applyUnit(Map equip) {
 
     updateAttributes(equip)
 
-    // Energy use is a separate request, made hourly. Start it with the first poll that
-    // finds the unit, since it needs the unit's ids.
-    if (!state.energyScheduled && !state.energyUnsupported) {
-        state.energyScheduled = true
-        unschedule("fetchEnergyUsage")
-        runEvery1Hour("fetchEnergyUsage")
-        runIn(5, "fetchEnergyUsage")
+    // Energy and water use are separate requests, made hourly. Start them with the
+    // first poll that finds the unit, since they need the unit's ids.
+    if (!state.usageScheduled) {
+        state.usageScheduled = true
+        scheduleUsage()
     }
 }
 
@@ -291,22 +293,100 @@ Integer percentValue(def field) {
 }
 
 // ---------------------------------------------------------------------------
-// Energy used today  ——  POST /code/{systemKey}/dynamicAction
+// Energy and water use  ——  POST /code/{systemKey}/dynamicAction
 //
-// The Rheem app's Usage Report. It isn't in the regular poll: it takes a request of
-// its own, made hourly, which is about as often as the app's report changes. The
-// response holds one entry per hour of the day; the energy attribute is their sum.
+// The Rheem app's Usage Report. It isn't in the regular poll: each kind takes a
+// request of its own, made hourly, at five past, so a new day's total appears soon
+// after midnight. A request covers one calendar day and returns an entry per hour.
+// Today's total is the sum of today's hours; the last 24 hours add yesterday's
+// hours after the current one. Yesterday's hours are kept rather than fetched every
+// hour, and refreshed until 3 am in case late readings are still arriving.
 // ---------------------------------------------------------------------------
-void fetchEnergyUsage() {
-    if (state.energyUnsupported) return
+@Field Map USAGE_KINDS = [
+    energy: [label: "energy use", usageType: "energyUsage", resultKey: "energy_usage",
+             todayAttr: "energy", last24Attr: "energyLast24Hours"],
+    water : [label: "water use",  usageType: "waterUsage",  resultKey: "water_usage",
+             todayAttr: "waterUsageToday", last24Attr: "waterUsageLast24Hours"],
+]
+@Field Integer YESTERDAY_SETTLED_HOUR = 3
+
+void scheduleUsage() {
+    unschedule("fetchUsage")
+    schedule("0 5 * * * ?", "fetchUsage")
+    runIn(5, "fetchUsage")
+}
+
+void fetchUsage() {
     // Not logged in, or no unit selected: the next poll sorts that out, and the
     // following hourly run tries again.
     if (!state.userToken || !state.deviceId || !state.serialNumber) return
+    USAGE_KINDS.each { kind, k ->
+        if (!state[kind + "Unsupported"]) updateUsage(kind as String, k as Map)
+    }
+    if (USAGE_KINDS.keySet().every { state[it + "Unsupported"] }) unschedule("fetchUsage")
+}
 
-    def tz      = location?.timeZone ?: TimeZone.getDefault()
-    def today   = new Date(now())
-    def day     = today.format("yyyy-MM-dd", tz)
-    def offset  = today.format("XXX", tz)
+void updateUsage(String kind, Map k) {
+    def tz        = location?.timeZone ?: TimeZone.getDefault()
+    def nowDate   = new Date(now())
+    String today  = nowDate.format("yyyy-MM-dd", tz)
+    // Noon minus a day is yesterday whatever daylight saving does
+    def noon      = Date.parse("yyyy-MM-dd HH:mm", "${today} 12:00", tz)
+    String yesterday = new Date(noon.time - 86_400_000L).format("yyyy-MM-dd", tz)
+    int hour      = nowDate.format("H", tz) as int
+
+    def result = requestUsage(k, today, tz)
+    if (result.status == "unsupported") {
+        state[kind + "Unsupported"] = true
+        log.info "${LOG_TAG}: this ${UNIT_NOUN} doesn't report ${k.label}, so ${k.todayAttr} and ${k.last24Attr} stay empty."
+        return
+    }
+    if (result.status != "ok") {
+        usageFailed(kind, k, result.reason as String)
+        return
+    }
+    logDebug "${k.label.capitalize()} ${today}: ${describeHours(result.hours as Map)} (${result.message ?: 'no message'})"
+
+    String unit = usageUnit(kind, result.message as String)
+    if (unit == null) {
+        // Gas heaters report energy in kBTU, and the EnergyMeter attribute is kWh
+        state[kind + "Unsupported"] = true
+        log.info "${LOG_TAG}: this ${UNIT_NOUN} reports its energy use in kBTU, so the energy attributes (kWh) are not used."
+        return
+    }
+
+    Map todayHours = result.hours as Map
+    sendEvent(name: k.todayAttr, value: usageTotal(todayHours.values()), unit: unit)
+    state.remove(kind + "ErrorLogged")
+
+    Map past = yesterdayHours(kind, k, yesterday, tz)
+    if (past == null) return   // no last-24-hours figure is better than a wrong one
+    def window = todayHours.findAll { h, v -> (h as int) <= hour }.values() +
+                 past.findAll { h, v -> (h as int) > hour }.values()
+    sendEvent(name: k.last24Attr, value: usageTotal(window), unit: unit)
+}
+
+// Yesterday's hourly readings, from the copy kept in state when it's current
+Map yesterdayHours(String kind, Map k, String yesterday, def tz) {
+    String key = kind + "Yesterday"
+    def kept = state[key] as Map
+    def settled = Date.parse("yyyy-MM-dd HH:mm", "${new Date(now()).format('yyyy-MM-dd', tz)} ${String.format('%02d', YESTERDAY_SETTLED_HOUR)}:00", tz).time
+    if (kept?.day == yesterday && (kept.fetchedAt as Long) >= settled) return kept.hours as Map
+
+    def result = requestUsage(k, yesterday, tz)
+    if (result.status != "ok") {
+        logDebug "${k.label.capitalize()} for ${yesterday} unavailable (${result.reason ?: result.status})"
+        return (kept?.day == yesterday) ? kept.hours as Map : null
+    }
+    logDebug "${k.label.capitalize()} ${yesterday}: ${describeHours(result.hours as Map)}"
+    state[key] = [day: yesterday, fetchedAt: now(), hours: result.hours]
+    return result.hours as Map
+}
+
+// One day's hourly readings: [status: "ok", hours: ["0": 0.1, …], message: …],
+// or status "unsupported" / "failed" with a reason.
+Map requestUsage(Map k, String day, def tz) {
+    String offset = Date.parse("yyyy-MM-dd HH:mm", "${day} 12:00", tz).format("XXX", tz)
     def params = [
         uri        : "${REST_BASE}/code/${SYSTEM_KEY}/dynamicAction",
         headers    : authedHeaders(),
@@ -316,76 +396,70 @@ void fetchEnergyUsage() {
             serial_number: state.serialNumber,
             start_date   : "${day}T00:00:00.999${offset}".toString(),
             end_date     : "${day}T23:59:59.999${offset}".toString(),
-            usage_type   : "energyUsage",
+            usage_type   : k.usageType,
         ]),
         contentType: "application/json",
         timeout    : 15,
     ]
+    Map result = [status: "failed", reason: "no response"]
     try {
         httpPost(params) { resp ->
             if (resp.status != 200) {
-                energyUsageFailed("HTTP ${resp.status}")
+                result = [status: "failed", reason: "HTTP ${resp.status}".toString()]
             } else if (!resp.data?.success) {
-                energyUsageUnsupported()
+                result = [status: "unsupported"]
             } else {
-                applyEnergyUsage(resp.data.results?.energy_usage as Map)
+                def usage = resp.data.results?.get(k.resultKey)
+                def points = usage?.data
+                if (!(points instanceof List)) {
+                    result = [status: "failed", reason: "no hourly data in the response"]
+                } else {
+                    def hours = [:]
+                    points.each { p ->
+                        def h = p?.name?.toString()
+                        def v = p?.value
+                        if (h?.isInteger() && v != null && v.toString().isNumber()) hours[h] = v.toString() as BigDecimal
+                    }
+                    result = [status: "ok", hours: hours, message: usage.message]
+                }
             }
         }
     } catch (Exception e) {
         // A 401 included: the next poll logs in again, and the next hourly run retries
-        energyUsageFailed(e.message)
+        result = [status: "failed", reason: e.message]
     }
+    return result
 }
 
-void applyEnergyUsage(Map usage) {
-    def points = usage?.data
-    if (!(points instanceof List)) {
-        energyUsageFailed("no hourly data in the response")
-        return
-    }
-    logDebug "Energy usage today: ${points.collect { "${it?.name}=${it?.value}" }.join(', ')} (${usage.message ?: 'no message'})"
-
-    if (energyUnit(usage.message as String) == "KBTU") {
-        // Gas heaters report kBTU, and the EnergyMeter attribute is kWh
-        if (!state.energyUnitLogged) {
-            state.energyUnitLogged = true
-            log.info "${LOG_TAG}: this ${UNIT_NOUN} reports its energy use in kBTU, so the energy attribute (kWh) is not used."
-        }
-        return
-    }
-
-    BigDecimal total = 0
-    points.each { p ->
-        def v = p?.value
-        if (v != null && v.toString().isNumber()) total += v.toString() as BigDecimal
-    }
-    sendEvent(name: "energy", value: total.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "kWh")
-    state.remove("energyErrorLogged")
-}
-
-// "KWH" or "KBTU", from the response message, which names the unit. Without one, gas
-// heaters are kBTU and everything else kWh, as in pyeconet.
-String energyUnit(String message) {
+// The unit to report, or null when the reading can't be reported. Energy is kWh;
+// a gas heater's kBTU doesn't fit the kWh EnergyMeter attribute. The response
+// message names the unit; without one, gas heaters are kBTU, as in pyeconet.
+String usageUnit(String kind, String message) {
     def m = message?.toLowerCase() ?: ""
-    if (m.contains("kbtu")) return "KBTU"
-    if (m.contains("kwh"))  return "KWH"
+    if (kind == "water") return (m.contains("liter") || m.contains("litre")) ? "L" : "gal"
+    if (m.contains("kbtu")) return null
+    if (m.contains("kwh"))  return "kWh"
     def t = state.genericType as String
-    return (t == "gasWaterHeater" || t == "tanklessWaterHeater") ? "KBTU" : "KWH"
+    return (t == "gasWaterHeater" || t == "tanklessWaterHeater") ? null : "kWh"
 }
 
-void energyUsageUnsupported() {
-    state.energyUnsupported = true
-    unschedule("fetchEnergyUsage")
-    log.info "${LOG_TAG}: this ${UNIT_NOUN} doesn't report energy use, so the energy attribute stays empty."
+BigDecimal usageTotal(Collection values) {
+    BigDecimal total = 0
+    values.each { total += it as BigDecimal }
+    return total.setScale(2, BigDecimal.ROUND_HALF_UP)
 }
 
-void energyUsageFailed(String reason) {
+String describeHours(Map hours) {
+    return hours ? hours.collect { h, v -> "${h}=${v}" }.join(", ") : "no readings"
+}
+
+void usageFailed(String kind, Map k, String reason) {
     // Once until it next works, not every hour
-    if (!state.energyErrorLogged) {
-        state.energyErrorLogged = true
-        log.warn "${LOG_TAG}: couldn't read today's energy use (${reason}). Trying again every hour."
+    if (!state[kind + "ErrorLogged"]) {
+        state[kind + "ErrorLogged"] = true
+        log.warn "${LOG_TAG}: couldn't read today's ${k.label} (${reason}). Trying again every hour."
     } else {
-        logDebug "Energy usage still unavailable: ${reason}"
+        logDebug "${k.label.capitalize()} still unavailable: ${reason}"
     }
 }
 

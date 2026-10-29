@@ -20,7 +20,7 @@ abstract class DriverBase extends Script {
     Map settings = [:]
     HubLog log = new HubLog()
     FakeDevice device = new FakeDevice(this)
-    Map location = [temperatureScale: "F"]
+    Map location = [temperatureScale: "F", timeZone: TimeZone.getTimeZone("UTC")]
     long clock = 1_800_000_000_000L
 
     List<Map> events = []

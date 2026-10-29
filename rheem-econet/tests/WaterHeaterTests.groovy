@@ -286,93 +286,179 @@ class WaterHeaterTests {
         assert lines().size() == 1
     }
 
-    // ---- energy used today ------------------------------------------------------------
+    // ---- energy and water use ---------------------------------------------------------
 
-    static Map energyData(List values, String message = "Energy Usage in kWh") {
-        def data = []
-        values.eachWithIndex { v, i -> data << [name: "${i}".toString(), value: v] }
-        [data: data, historyData: [], message: message]
+    // The test clock is 2027-01-15 08:00 UTC, and the hub's time zone UTC unless a
+    // test sets one: hour 8 of 2027-01-15, so yesterday is 2027-01-14.
+    static final Map TODAY_KWH     = [0: 0.1, 5: 0.6, 8: 0.4]
+    static final Map YESTERDAY_KWH = [3: 1.0, 8: 5.0, 9: 0.7, 23: 0.2]
+
+    static List usageRequests(Map ctx, String type = null, String day = null) {
+        ctx.api.usageRequests.findAll { r ->
+            (!type || r.usage_type == type) && (!day || (r.start_date as String).startsWith(day))
+        }
     }
 
-    void testEnergyIsScheduledHourlyAndSoonAfterConnecting() {
+    void testUsageIsScheduledAtFivePastEveryHour() {
         def d = start().d
-        assert d.scheduled.any { it.kind == "every" && it.minutes == 60 && it.method == "fetchEnergyUsage" }
-        assert d.runInsFor("fetchEnergyUsage").size() == 1
+        assert d.scheduled.any { it.kind == "cron" && it.cron == "0 5 * * * ?" && it.method == "fetchUsage" }
+        assert d.runInsFor("fetchUsage").size() == 1, "and soon after connecting"
         d.exec("fetchEquipment")
-        assert d.runInsFor("fetchEnergyUsage").size() == 1, "not rescheduled on every poll"
+        assert d.runInsFor("fetchUsage").size() == 1, "not rescheduled on every poll"
     }
 
-    void testEnergyUsedToday() {
+    void testEnergyTodayAndLast24Hours() {
         def ctx = start()
-        ctx.d.location.timeZone = TimeZone.getTimeZone("America/Chicago")
-        ctx.api.energyUsage = energyData([0, 0.1, 0, 0.6, 0, 0.1, 0.7, 0.4])
-        ctx.d.fire("fetchEnergyUsage")
-        assert ctx.d.current("energy") == 1.9
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
+        ctx.d.fire("fetchUsage")
+        assert ctx.d.current("energy") == 1.1
         assert ctx.d.eventsNamed("energy")[-1].unit == "kWh"
+        // Today's hours 0–8, plus yesterday's after hour 8
+        assert ctx.d.current("energyLast24Hours") == 2.0
+        assert ctx.d.eventsNamed("energyLast24Hours")[-1].unit == "kWh"
 
-        def req = ctx.api.energyRequests[-1]
+        def req = usageRequests(ctx, "energyUsage", "2027-01-15")[0]
         assert req.ACTION == "waterheaterUsageReportView"
-        assert req.usage_type == "energyUsage"
         assert req.device_name == "DEVICE-WH-0001"
         assert req.serial_number == "00-00-00-00-00-00-bb-01-01"
-        // The test clock is 2027-01-15 08:00 UTC: 02:00 that morning in Chicago
-        assert req.start_date == "2027-01-15T00:00:00.999-06:00"
-        assert req.end_date == "2027-01-15T23:59:59.999-06:00"
+        assert req.start_date == "2027-01-15T00:00:00.999Z"
+        assert req.end_date == "2027-01-15T23:59:59.999Z"
+        assert usageRequests(ctx, "energyUsage", "2027-01-14").size() == 1
     }
 
-    void testEnergyNotSupportedStopsAsking() {
+    void testDaysFollowTheHubTimeZone() {
         def ctx = start()
-        ctx.api.energySupported = false
-        ctx.d.fire("fetchEnergyUsage")
+        ctx.d.location.timeZone = TimeZone.getTimeZone("America/Chicago")   // 02:00 on 2027-01-15
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
+        ctx.d.fire("fetchUsage")
+        def req = usageRequests(ctx, "energyUsage", "2027-01-15")[0]
+        assert req.start_date == "2027-01-15T00:00:00.999-06:00"
+        assert req.end_date == "2027-01-15T23:59:59.999-06:00"
+        // Hour 2: today's hour 0, plus yesterday's 3, 8, 9 and 23
+        assert ctx.d.current("energy") == 1.1, "today's total counts every hour reported"
+        assert ctx.d.current("energyLast24Hours") == 7.0
+    }
+
+    void testYesterdayIsKeptOnceItHasSettled() {
+        def ctx = start()
+        ctx.d.location.timeZone = TimeZone.getTimeZone("America/Chicago")   // 02:00
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
+        ctx.d.fire("fetchUsage")
+        ctx.d.advance(3_600_000)   // 03:00: fetched before 3 am, so once more
+        ctx.d.exec("fetchUsage")
+        ctx.d.advance(3_600_000)   // 04:00: kept
+        ctx.d.exec("fetchUsage")
+        assert usageRequests(ctx, "energyUsage", "2027-01-14").size() == 2
+        assert usageRequests(ctx, "energyUsage", "2027-01-15").size() == 3
+        ctx.d.advance(24 * 3_600_000L)   // the next day: its yesterday is new
+        ctx.d.exec("fetchUsage")
+        assert usageRequests(ctx, "energyUsage", "2027-01-15").size() == 4
+    }
+
+    void testANewDayStartsTodaysTotalAgain() {
+        def ctx = start()
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH,
+                                       "2027-01-16": [0: 0.3]]]
+        ctx.d.fire("fetchUsage")
+        ctx.d.advance(16 * 3_600_000L + 5 * 60_000L)   // 00:05 on 2027-01-16
+        ctx.d.exec("fetchUsage")
+        assert ctx.d.current("energy") == 0.3
+        assert ctx.d.current("energyLast24Hours") == 1.3, "hour 0 today (0.3) plus hours 1–23 of yesterday (0.6 + 0.4)"
+    }
+
+    void testWaterUsage() {
+        def ctx = start()
+        ctx.api.usage = [waterUsage: ["2027-01-15": [6: 12.5, 7: 3.0], "2027-01-14": [20: 30.0]]]
+        ctx.d.fire("fetchUsage")
+        assert ctx.d.current("waterUsageToday") == 15.5
+        assert ctx.d.current("waterUsageLast24Hours") == 45.5
+        assert ctx.d.eventsNamed("waterUsageToday")[-1].unit == "gal"
         assert ctx.d.current("energy") == null
         assert ctx.d.log.at("info").any { it.contains("doesn't report energy use") }
-        assert !ctx.d.scheduled.any { it.method == "fetchEnergyUsage" }
-        ctx.d.exec("fetchEnergyUsage")
-        ctx.d.exec("fetchEquipment")
-        assert ctx.api.energyRequests.size() == 1
-        assert ctx.d.runInsFor("fetchEnergyUsage").isEmpty()
+
+        def metric = start()
+        metric.api.usage = [waterUsage: ["2027-01-15": [6: 40]]]
+        metric.api.usageMessages.waterUsage = "Water Usage in liters"
+        metric.d.fire("fetchUsage")
+        assert metric.d.eventsNamed("waterUsageToday")[-1].unit == "L"
+    }
+
+    void testUnsupportedKindsStopBeingAsked() {
+        def ctx = start()
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
+        ctx.d.fire("fetchUsage")
+        ctx.d.exec("fetchUsage")
+        assert usageRequests(ctx, "waterUsage").size() == 1
+        assert ctx.d.log.at("info").count { it.contains("doesn't report water use") } == 1
+        assert ctx.d.scheduled.any { it.method == "fetchUsage" }, "energy still needs the hourly run"
+
+        def none = start()
+        none.d.fire("fetchUsage")
+        assert !none.d.scheduled.any { it.method == "fetchUsage" }, "nothing left to ask for"
+        none.d.exec("fetchEquipment")
+        assert none.d.runInsFor("fetchUsage").isEmpty()
     }
 
     void testGasEnergyInKbtuIsNotReportedAsKwh() {
         def ctx = start([type: "gasWaterHeater", modes: null])
-        ctx.api.energyUsage = energyData([3, 4], "Energy Usage in kBTU")
-        ctx.d.fire("fetchEnergyUsage")
+        ctx.api.usage = [energyUsage: ["2027-01-15": [1: 3]], waterUsage: ["2027-01-15": [1: 5]]]
+        ctx.api.usageMessages.energyUsage = "Energy Usage in kBTU"
+        ctx.d.fire("fetchUsage")
         assert ctx.d.current("energy") == null
+        assert ctx.d.current("energyLast24Hours") == null
         assert ctx.d.log.at("info").count { it.contains("kBTU") } == 1
-        ctx.api.energyUsage = energyData([3, 4], "no unit named")
-        ctx.d.exec("fetchEnergyUsage")
-        assert ctx.d.current("energy") == null, "a gas heater with no unit named is kBTU"
+        assert ctx.d.current("waterUsageToday") == 5
+
+        def unnamed = start([type: "gasWaterHeater", modes: null])
+        unnamed.api.usage = [energyUsage: ["2027-01-15": [1: 3]]]
+        unnamed.api.usageMessages.energyUsage = "no unit named"
+        unnamed.d.fire("fetchUsage")
+        assert unnamed.d.current("energy") == null, "a gas heater with no unit named is kBTU"
     }
 
-    void testEnergyFailureWarnsOnceThenRecovers() {
+    void testUsageFailureWarnsOnceThenRecovers() {
         def ctx = start()
-        ctx.api.energyStatus = 500
-        ctx.d.fire("fetchEnergyUsage")
-        ctx.d.exec("fetchEnergyUsage")
+        ctx.api.usage = [energyUsage: ["2027-01-15": [0: 0.5], "2027-01-14": [:]]]
+        ctx.api.usageStatus = 500
+        ctx.d.fire("fetchUsage")
+        ctx.d.exec("fetchUsage")
         assert ctx.d.log.at("warn").count { it.contains("today's energy use") } == 1
-        assert ctx.d.scheduled.any { it.kind == "every" && it.method == "fetchEnergyUsage" }, "keeps trying hourly"
-        ctx.api.energyStatus = null
-        ctx.api.energyUsage = energyData([0.5])
-        ctx.d.exec("fetchEnergyUsage")
+        assert ctx.d.log.at("warn").count { it.contains("today's water use") } == 1
+        assert ctx.d.scheduled.any { it.method == "fetchUsage" }, "keeps trying hourly"
+        ctx.api.usageStatus = null
+        ctx.d.exec("fetchUsage")
         assert ctx.d.current("energy") == 0.5
-        ctx.api.energyStatus = 500
-        ctx.d.exec("fetchEnergyUsage")
+        ctx.api.usageStatus = 500
+        ctx.d.exec("fetchUsage")
         assert ctx.d.log.at("warn").count { it.contains("today's energy use") } == 2, "warns again after recovering"
     }
 
-    void testEnergyWaitsForASession() {
+    void testNoLast24HoursWithoutYesterday() {
         def ctx = start()
-        ctx.d.state.remove("userToken")
-        ctx.d.exec("fetchEnergyUsage")
-        assert ctx.api.energyRequests.isEmpty()
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH]]
+        def real = ctx.d.httpHandler
+        ctx.d.httpHandler = { Map p ->
+            if ((p.body as String)?.contains("2027-01-14")) throw new groovyx.net.http.HttpResponseException(500)
+            real(p)
+        }
+        ctx.d.fire("fetchUsage")
+        assert ctx.d.current("energy") == 1.1
+        assert ctx.d.current("energyLast24Hours") == null, "a partial window would understate it"
     }
 
-    void testEnergyLogsNoIdentifiers() {
+    void testUsageWaitsForASession() {
         def ctx = start()
-        ctx.api.energyUsage = energyData([0.2])
-        ctx.d.fire("fetchEnergyUsage")
-        ctx.api.energyStatus = 500
-        ctx.d.exec("fetchEnergyUsage")
+        ctx.d.state.remove("userToken")
+        ctx.d.exec("fetchUsage")
+        assert ctx.api.usageRequests.isEmpty()
+    }
+
+    void testUsageLogsNoIdentifiers() {
+        def ctx = start()
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
+        ctx.d.fire("fetchUsage")
+        ctx.api.usageStatus = 500
+        ctx.d.exec("fetchUsage")
         def all = ctx.d.log.all().join("\n")
         ["DEVICE-WH-0001", "00-00-00-00-00-00-bb-01-01", "00000000000000bb0101"].each { assert !all.contains(it), it }
     }

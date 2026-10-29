@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.4.0
+ * Version: 0.5.0-beta.1
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -35,6 +35,7 @@ metadata {
         capability "ThermostatHeatingSetpoint" // heatingSetpoint + setHeatingSetpoint()
         capability "ThermostatOperatingState"  // thermostatOperatingState (heating / idle)
         capability "ThermostatMode"            // thermostatMode, supportedThermostatModes, heat() auto() … — for Rule Machine
+        capability "EnergyMeter"               // energy — kWh used today, from the Rheem app's Usage Report
         capability "Refresh"
         capability "Initialize"
 
@@ -44,6 +45,11 @@ metadata {
         attribute "hotWaterLevel",             "number"   // 0 / 33 / 66 / 100
         attribute "online",                    "enum", ["true", "false"]
         attribute "awayMode",                  "enum", ["away", "home"]
+        // Product Health, as the Rheem app shows it. Only units with the hardware report these.
+        attribute "leakSensor",                "enum", ["connected", "not connected"]
+        attribute "shutoffValve",              "enum", ["open", "closed"]
+        attribute "tankHealth",                "number"   // % — "Element Health" in the app on heat pump units
+        attribute "compressorHealth",          "number"   // % — heat pump units only
 
         command "setWaterHeaterMode", [[
             name: "Mode", type: "ENUM",
@@ -76,7 +82,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.4.0"
+@Field String DRIVER_VERSION = "0.5.0-beta.1"
 @Field String LOG_TAG        = "EcoNet WH"
 @Field String UNIT_NOUN      = "water heater"
 @Field String UNIT_TITLE     = "Water heater"
@@ -110,6 +116,10 @@ metadata {
     "performance"  : "PERFORMANCE",
     "vacation"     : "VACATION",
 ]
+
+// Equipment fields behind Product Health, logged raw at debug level so a new unit's
+// values can be checked against what the Rheem app shows.
+@Field List HEALTH_FIELDS = ["@LEAKINSTALLED", "@VALVESTATUS", "@TANK", "@COMBUSTION"]
 
 // Modes in which the heater is not keeping water hot. Off for the Switch capability as
 // well as for thermostatMode, so the two never disagree; on() restores the last other mode.
@@ -164,7 +174,26 @@ void applyUnit(Map equip) {
     state.setpointLow   = equip["@SETPOINT"]?.constraints?.lowerLimit
     state.setpointHigh  = equip["@SETPOINT"]?.constraints?.upperLimit
 
+    // Once a session: which fields this unit reports, and the raw Product Health values.
+    // None of these carry an identifier.
+    if (!state.fieldsLogged) {
+        state.fieldsLogged = true
+        logDebug "Fields reported: ${equip.keySet().findAll { it.toString().startsWith('@') }.sort()}"
+        logDebug "Product Health fields: " + HEALTH_FIELDS.collect { k ->
+            "${k}=${equip[k] != null ? JsonOutput.toJson(equip[k]) : 'absent'}"
+        }.join(", ")
+    }
+
     updateAttributes(equip)
+
+    // Energy use is a separate request, made hourly. Start it with the first poll that
+    // finds the unit, since it needs the unit's ids.
+    if (!state.energyScheduled && !state.energyUnsupported) {
+        state.energyScheduled = true
+        unschedule("fetchEnergyUsage")
+        runEvery1Hour("fetchEnergyUsage")
+        runIn(5, "fetchEnergyUsage")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +254,139 @@ void updateAttributes(Map equip) {
     // Away mode
     def away = equip["@AWAY"]
     if (away != null) sendEvent(name: "awayMode", value: away ? "away" : "home")
+
+    updateProductHealth(equip)
+}
+
+// Product Health. Each attribute is sent only when the unit reports the field, so a
+// heater without a leak sensor or shut-off valve doesn't show one as missing.
+void updateProductHealth(Map equip) {
+    def leak = equip["@LEAKINSTALLED"]
+    if (leak instanceof Map && leak.value != null) {
+        sendEvent(name: "leakSensor", value: leak.value.toString() == "1" ? "connected" : "not connected")
+    }
+
+    // The app shows this field's title as is: "Shut-OFF Valve - Open" or "- Closed"
+    def valve = (equip["@VALVESTATUS"] instanceof Map) ? equip["@VALVESTATUS"].title?.toString()?.toLowerCase() : null
+    if (valve?.startsWith("shut-off valve - ")) {
+        def position = valve.substring("shut-off valve - ".length()).trim()
+        if (position in ["open", "closed"]) sendEvent(name: "shutoffValve", value: position)
+    }
+
+    def tank = percentValue(equip["@TANK"])
+    if (tank != null) sendEvent(name: "tankHealth", value: tank, unit: "%")
+
+    // On a heat pump unit @COMBUSTION is the compressor's health. On a gas heater the
+    // same field presumably means combustion, which is unverified, so it isn't reported.
+    if ((state.genericType as String)?.toLowerCase()?.contains("heatpump")) {
+        def compressor = percentValue(equip["@COMBUSTION"])
+        if (compressor != null) sendEvent(name: "compressorHealth", value: compressor, unit: "%")
+    }
+}
+
+Integer percentValue(def field) {
+    def v = (field instanceof Map) ? field.value : null
+    if (v == null || !v.toString().isNumber()) return null
+    return (v.toString() as BigDecimal).setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
+}
+
+// ---------------------------------------------------------------------------
+// Energy used today  ——  POST /code/{systemKey}/dynamicAction
+//
+// The Rheem app's Usage Report. It isn't in the regular poll: it takes a request of
+// its own, made hourly, which is about as often as the app's report changes. The
+// response holds one entry per hour of the day; the energy attribute is their sum.
+// ---------------------------------------------------------------------------
+void fetchEnergyUsage() {
+    if (state.energyUnsupported) return
+    // Not logged in, or no unit selected: the next poll sorts that out, and the
+    // following hourly run tries again.
+    if (!state.userToken || !state.deviceId || !state.serialNumber) return
+
+    def tz      = location?.timeZone ?: TimeZone.getDefault()
+    def today   = new Date(now())
+    def day     = today.format("yyyy-MM-dd", tz)
+    def offset  = today.format("XXX", tz)
+    def params = [
+        uri        : "${REST_BASE}/code/${SYSTEM_KEY}/dynamicAction",
+        headers    : authedHeaders(),
+        body       : JsonOutput.toJson([
+            ACTION       : "waterheaterUsageReportView",
+            device_name  : state.deviceId,
+            serial_number: state.serialNumber,
+            start_date   : "${day}T00:00:00.999${offset}".toString(),
+            end_date     : "${day}T23:59:59.999${offset}".toString(),
+            usage_type   : "energyUsage",
+        ]),
+        contentType: "application/json",
+        timeout    : 15,
+    ]
+    try {
+        httpPost(params) { resp ->
+            if (resp.status != 200) {
+                energyUsageFailed("HTTP ${resp.status}")
+            } else if (!resp.data?.success) {
+                energyUsageUnsupported()
+            } else {
+                applyEnergyUsage(resp.data.results?.energy_usage as Map)
+            }
+        }
+    } catch (Exception e) {
+        // A 401 included: the next poll logs in again, and the next hourly run retries
+        energyUsageFailed(e.message)
+    }
+}
+
+void applyEnergyUsage(Map usage) {
+    def points = usage?.data
+    if (!(points instanceof List)) {
+        energyUsageFailed("no hourly data in the response")
+        return
+    }
+    logDebug "Energy usage today: ${points.collect { "${it?.name}=${it?.value}" }.join(', ')} (${usage.message ?: 'no message'})"
+
+    if (energyUnit(usage.message as String) == "KBTU") {
+        // Gas heaters report kBTU, and the EnergyMeter attribute is kWh
+        if (!state.energyUnitLogged) {
+            state.energyUnitLogged = true
+            log.info "${LOG_TAG}: this ${UNIT_NOUN} reports its energy use in kBTU, so the energy attribute (kWh) is not used."
+        }
+        return
+    }
+
+    BigDecimal total = 0
+    points.each { p ->
+        def v = p?.value
+        if (v != null && v.toString().isNumber()) total += v.toString() as BigDecimal
+    }
+    sendEvent(name: "energy", value: total.setScale(2, BigDecimal.ROUND_HALF_UP), unit: "kWh")
+    state.remove("energyErrorLogged")
+}
+
+// "KWH" or "KBTU", from the response message, which names the unit. Without one, gas
+// heaters are kBTU and everything else kWh, as in pyeconet.
+String energyUnit(String message) {
+    def m = message?.toLowerCase() ?: ""
+    if (m.contains("kbtu")) return "KBTU"
+    if (m.contains("kwh"))  return "KWH"
+    def t = state.genericType as String
+    return (t == "gasWaterHeater" || t == "tanklessWaterHeater") ? "KBTU" : "KWH"
+}
+
+void energyUsageUnsupported() {
+    state.energyUnsupported = true
+    unschedule("fetchEnergyUsage")
+    log.info "${LOG_TAG}: this ${UNIT_NOUN} doesn't report energy use, so the energy attribute stays empty."
+}
+
+void energyUsageFailed(String reason) {
+    // Once until it next works, not every hour
+    if (!state.energyErrorLogged) {
+        state.energyErrorLogged = true
+        log.warn "${LOG_TAG}: couldn't read today's energy use (${reason}). Trying again every hour."
+    } else {
+        logDebug "Energy usage still unavailable: ${reason}"
+    }
 }
 
 // Determine the current mode display name from the equipment data.

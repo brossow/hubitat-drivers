@@ -18,7 +18,8 @@ Each driver is self-contained — no parent app required.
 | Thermostat: cool, heat, auto (heating and cooling), fan only, idle | Verified |
 | Thermostat: several thermostats on one account | Verified by a community user |
 | Thermostat: zoned systems | Not yet tested — reports welcome |
-| Water heater: heat pump (modes, setpoint, on/off) | Verified by a community user |
+| Water heater: heat pump Gen 4 and Gen 5 (modes, setpoint, on/off, hot water level) | Verified by community users |
+| Water heater: Product Health and energy used today (new in 0.5.0) | Being tested on a Gen 5 heat pump unit |
 | Water heater: gas, tankless and electric-only units | Not yet tested — reports welcome |
 
 ---
@@ -177,6 +178,8 @@ In auto mode the thermostat itself decides when to start heating or cooling, and
 
 ### Features
 - Reads setpoint, operating mode, running state, and hot water tank level
+- Reads Product Health, as the Rheem app shows it: leak sensor, shut-off valve, tank (element) health and compressor health — on units that have them
+- Reports the energy used today, from the Rheem app's Usage Report, as a standard `EnergyMeter`
 - Sets temperature, mode, and away mode
 - `Switch` capability maps to water heater on/off (restores last active mode when turned on). Vacation mode counts as off
 - `ThermostatMode` capability exposes `heat` / `auto` / `emergency heat` / `off` for Rule Machine compatibility
@@ -193,7 +196,7 @@ In auto mode the thermostat itself decides when to start heating or cooling, and
 Not all modes are available on every device — the `supportedWaterHeaterModes` attribute reflects what the device actually reports. The **Set Water Heater Mode** dropdown always lists every mode above, because Hubitat fixes a command's options for the whole driver and can't narrow them per device. Choosing a mode your heater doesn't offer does nothing to the heater; the driver refuses it and logs an error naming the modes it does offer.
 
 ### Capabilities
-`Switch` · `ThermostatHeatingSetpoint` · `ThermostatOperatingState` · `ThermostatMode` · `Refresh` · `Initialize`
+`Switch` · `ThermostatHeatingSetpoint` · `ThermostatOperatingState` · `ThermostatMode` · `EnergyMeter` · `Refresh` · `Initialize`
 
 ### Custom Attributes
 
@@ -206,6 +209,13 @@ Not all modes are available on every device — the `supportedWaterHeaterModes` 
 | `hotWaterLevel` | 0 / 33 / 66 / 100 | Tank hot water availability |
 | `awayMode` | `away` / `home` | Away mode state |
 | `online` | `true` / `false` | Device connectivity |
+| `energy` | kWh | Energy used today, from the app's Usage Report. Starts again at midnight. Read hourly, not on every poll, since the report changes about that often. Gas heaters report in kBTU, so this stays empty on them |
+| `leakSensor` | `connected` / `not connected` | Leak sensor |
+| `shutoffValve` | `open` / `closed` | Shut-off valve position |
+| `tankHealth` | % | Shown as **Element Health** in the app on heat pump units |
+| `compressorHealth` | % | Compressor health — heat pump units only |
+
+The Product Health attributes and `energy` only appear if your heater reports them. A unit with no leak sensor or shut-off valve won't show those attributes at all.
 
 ### Preferences
 

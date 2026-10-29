@@ -5,6 +5,7 @@ capability Switch
 capability ThermostatHeatingSetpoint
 capability ThermostatOperatingState
 capability ThermostatMode
+capability EnergyMeter
 capability Refresh
 capability Initialize
 attribute waterHeaterMode string
@@ -13,6 +14,10 @@ attribute thermostatSetpoint number
 attribute hotWaterLevel number
 attribute online enum [true, false]
 attribute awayMode enum [away, home]
+attribute leakSensor enum [connected, not connected]
+attribute shutoffValve enum [open, closed]
+attribute tankHealth number
+attribute compressorHealth number
 command setWaterHeaterMode [Mode:ENUM[off, electric, energy saving, heat pump, high demand, gas, performance, vacation]]
 command setAwayMode [Away Mode:ENUM[away, home]]
 input email text required

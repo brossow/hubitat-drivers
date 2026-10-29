@@ -21,6 +21,12 @@ class FakeEcoNet {
     Integer publishStatus = null
     Exception networkError = null
 
+    // Energy usage (dynamicAction). null = the endpoint isn't expected to be called.
+    Map energyUsage = null              // results.energy_usage
+    boolean energySupported = true      // false → success=false, as for a unit without the report
+    Integer energyStatus = null
+    List<Map> energyRequests = []       // decoded request bodies
+
     int authCalls = 0
     int pollCalls = 0
     List<Map> published = []           // decoded MQTT payloads
@@ -42,6 +48,13 @@ class FakeEcoNet {
             pollCalls++
             if (pollStatus && (pollFailTimes == null || pollFailTimes-- > 0)) throw new HttpResponseException(pollStatus)
             return resp(200, [success: true, results: [locations: locations]])
+        }
+        if (uri.contains("/dynamicAction")) {
+            energyRequests << (new JsonSlurper().parseText(params.body as String) as Map)
+            if (energyStatus) throw new HttpResponseException(energyStatus)
+            if (!energySupported) return resp(200, [success: false])
+            if (energyUsage == null) throw new IllegalStateException("energy usage requested but not scripted")
+            return resp(200, [success: true, results: [energy_usage: energyUsage]])
         }
         if (uri.contains("/publish")) {
             if (publishStatus) throw new HttpResponseException(publishStatus)

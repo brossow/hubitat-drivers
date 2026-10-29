@@ -208,4 +208,71 @@ class LoginTests {
             assert ctx.d.settings.logEnable == false
         }
     }
+
+    // ---- failed polls -----------------------------------------------------------------
+
+    void testABriefOutageLogsOneWarningAndOneRecovery() {
+        FILES.each { f ->
+            def ctx = start(f)
+            ctx.d.log.clear()
+            ctx.api.pollError = new java.net.SocketTimeoutException("Read timed out")
+            10.times { ctx.d.advance(60_000); ctx.d.exec("fetchEquipment") }
+            assert ctx.d.log.at("error").isEmpty(), f
+            assert ctx.d.log.at("warn").size() == 1
+            assert ctx.d.log.at("warn")[0].contains("Read timed out")
+            ctx.api.pollError = null
+            ctx.d.advance(60_000)
+            ctx.d.exec("fetchEquipment")
+            def back = ctx.d.log.at("info").findAll { it.contains("reaching EcoNet again") }
+            assert back.size() == 1
+            assert back[0].contains("10 failed polls over 10 minutes"), back[0]
+            assert !ctx.d.state.containsKey("pollFailures")
+        }
+    }
+
+    void testAnOutageOverHalfAnHourBecomesOneError() {
+        FILES.each { f ->
+            def ctx = start(f)
+            ctx.api.pollError = new UnknownHostException("rheem.rheemconnect.com: Temporary failure in name resolution")
+            61.times { ctx.d.advance(60_000); ctx.d.exec("fetchEquipment") }
+            def errors = ctx.d.log.at("error")
+            assert errors.size() == 1, f
+            assert errors[0].contains("after 30 minutes") && errors[0].contains("name resolution")
+        }
+    }
+
+    void testEveryKindOfPollFailureCounts() {
+        FILES.each { f ->
+            def ctx = start(f)
+            ctx.api.pollStatus = 400
+            ctx.d.exec("fetchEquipment")
+            ctx.api.pollStatus = null
+            ctx.api.pollUnsuccessful = true
+            ctx.d.exec("fetchEquipment")
+            assert ctx.d.log.at("error").isEmpty()
+            assert ctx.d.state.pollFailures == 2
+            assert ctx.d.log.at("warn").count { it.contains("couldn't reach EcoNet") && it.contains("400") } == 1
+        }
+    }
+
+    void testAFailedPollKeepsTheLastReadings() {
+        FILES.each { f ->
+            def ctx = start(f)
+            def before = new LinkedHashMap(ctx.d.device.current)
+            ctx.api.pollError = new java.net.SocketTimeoutException("Read timed out")
+            ctx.d.exec("fetchEquipment")
+            assert ctx.d.device.current == before
+        }
+    }
+
+    void testSaveClearsAnOutageInProgress() {
+        FILES.each { f ->
+            def ctx = start(f)
+            ctx.api.pollError = new java.net.SocketTimeoutException("Read timed out")
+            ctx.d.exec("fetchEquipment")
+            ctx.api.pollError = null
+            ctx.d.exec("updated")
+            assert !ctx.d.state.containsKey("pollFailures")
+        }
+    }
 }

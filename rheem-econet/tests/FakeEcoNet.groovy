@@ -20,6 +20,8 @@ class FakeEcoNet {
     Integer pollFailTimes = null       // null = every poll fails while pollStatus is set
     Integer publishStatus = null
     Exception networkError = null
+    Exception pollError = null         // thrown by polls only, e.g. a timeout once logged in
+    boolean pollUnsuccessful = false   // 200 with success=false
 
     // Energy usage (dynamicAction). null = the endpoint isn't expected to be called.
     Map energyUsage = null              // results.energy_usage
@@ -47,6 +49,8 @@ class FakeEcoNet {
         if (uri.contains("/getUserDataForApp")) {
             pollCalls++
             if (pollStatus && (pollFailTimes == null || pollFailTimes-- > 0)) throw new HttpResponseException(pollStatus)
+            if (pollError) throw pollError
+            if (pollUnsuccessful) return resp(200, [success: false])
             return resp(200, [success: true, results: [locations: locations]])
         }
         if (uri.contains("/dynamicAction")) {

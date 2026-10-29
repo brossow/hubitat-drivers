@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Thermostat — Hubitat Driver
- * Version: 0.5.0-beta.1
+ * Version: 0.5.0-beta.2
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud API at rheem.rheemconnect.com.
@@ -72,7 +72,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants  (@Field = script-level variable, accessible across all methods)
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.5.0-beta.1"
+@Field String DRIVER_VERSION = "0.5.0-beta.2"
 @Field String LOG_TAG        = "EcoNet"
 @Field String UNIT_NOUN      = "thermostat"
 @Field String UNIT_TITLE     = "Thermostat"
@@ -497,6 +497,7 @@ def findEnumIndex(List list, Closure predicate) {
 @Field String SYSTEM_SECRET = "E2E699CB0BE6C6FADDB1B0BC9A20"
 @Field Integer LOGIN_RETRY_MIN = 120    // seconds; doubles with each failed login…
 @Field Integer LOGIN_RETRY_MAX = 3600   // …up to this cap
+@Field Integer POLL_FAILURE_ERROR_AFTER = 1800   // seconds of failed polls before it's logged as an error
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -635,6 +636,12 @@ String describeDelay(int seconds) {
     return minutes == 1 ? "1 minute" : "${minutes} minutes"
 }
 
+String describeDuration(int seconds) {
+    int minutes = Math.max(1, Math.round(seconds / 60.0) as int)
+    if (minutes < 120) return minutes == 1 ? "1 minute" : "${minutes} minutes"
+    return "${Math.round(minutes / 60.0) as int} hours"
+}
+
 // A 401 means the session token expired: log in again — unless we only just did, in
 // which case the new token is being refused too and retrying at once would loop.
 void handleUnauthorized(String context) {
@@ -676,20 +683,58 @@ def fetchEquipment() {
             if (resp.status == 200) {
                 def data = resp.data
                 if (data?.success) {
+                    pollSucceeded()
                     parseLocations(data.results.locations)
                 } else {
-                    log.error "${LOG_TAG} getUserDataForApp returned success=false"
+                    pollFailed("EcoNet returned success=false")
                 }
             } else if (resp.status == 401) {
                 handleUnauthorized("poll")
             } else {
-                log.error "${LOG_TAG} getUserDataForApp HTTP ${resp.status}"
+                pollFailed("HTTP ${resp.status}")
             }
         }
     } catch (Exception e) {
         if (httpErrorStatus(e) == 401) handleUnauthorized("poll")
-        else log.error "${LOG_TAG} fetchEquipment exception: ${e.message}"
+        else pollFailed(e.message)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Failed polls
+//
+// Timeouts, DNS failures and the odd 400 come and go, and the next poll is the
+// retry. Logging each one as an error made a ten-minute blip look like ten
+// faults, so a run of failures logs one warning when it starts and one line when
+// it ends, and becomes an error only if it lasts half an hour.
+// ---------------------------------------------------------------------------
+void pollFailed(String reason) {
+    int failures = ((state.pollFailures ?: 0) as Integer) + 1
+    state.pollFailures = failures
+    if (failures == 1) {
+        state.pollFailingSince = now()
+        log.warn "${LOG_TAG}: couldn't reach EcoNet (${reason}). Keeping the last readings and trying again at the next poll."
+        return
+    }
+    int seconds = ((now() - (state.pollFailingSince as Long)) / 1000) as int
+    if (seconds >= POLL_FAILURE_ERROR_AFTER && !state.pollFailureReported) {
+        state.pollFailureReported = true
+        log.error "${LOG_TAG}: still can't reach EcoNet after ${describeDuration(seconds)} (${reason}). Readings are " +
+                  "out of date. Check the hub's internet connection; if that's fine, EcoNet itself may be down."
+    } else {
+        logDebug "Poll failed again (${failures} in a row): ${reason}"
+    }
+}
+
+void pollSucceeded() {
+    if (!state.pollFailures) return
+    int failures = state.pollFailures as Integer
+    int seconds  = ((now() - (state.pollFailingSince as Long)) / 1000) as int
+    log.info "${LOG_TAG}: reaching EcoNet again after ${failures} failed poll${failures == 1 ? '' : 's'} " +
+             "over ${describeDuration(seconds)}."
+    state.remove("pollFailures")
+    state.remove("pollFailingSince")
+    state.remove("pollFailureReported")
 }
 
 // ---------------------------------------------------------------------------

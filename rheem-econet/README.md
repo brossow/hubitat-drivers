@@ -234,6 +234,7 @@ The Product Health attributes and `energy` only appear if your heater reports th
 
 - **Cloud-dependent**: All communication goes through Rheem's ClearBlade cloud API. Local control is not possible.
 - **Commands**: Sent via the ClearBlade REST messaging endpoint (`POST /api/v/1/message/{systemKey}/publish`), which proxies to the underlying MQTT broker — the same mechanism used by the Rheem mobile app.
+- **Brief outages are normal**: EcoNet occasionally times out, and a hub's DNS can blip. The driver keeps the last readings and tries again at the next poll. A run of failed polls logs one warning when it starts and one line when it's reaching EcoNet again; it's logged as an error only if it lasts half an hour.
 - **Multiple devices**: One Hubitat device controls one physical unit — see [If you have more than one thermostat or water heater](#if-you-have-more-than-one-thermostat-or-water-heater) above.
 
 ## Asking for help

@@ -19,7 +19,8 @@ Each driver is self-contained — no parent app required.
 | Thermostat: several thermostats on one account | Verified by a community user |
 | Thermostat: zoned systems | Not yet tested — reports welcome |
 | Water heater: heat pump Gen 4 and Gen 5 (modes, setpoint, on/off, hot water level) | Verified by community users |
-| Water heater: Product Health, energy and water use (new in 0.5.0) | Being tested on a Gen 5 heat pump unit |
+| Water heater: Product Health and energy use (new in 0.5.0) | Verified by a community user on a Gen 5 heat pump unit |
+| Water heater: water use (new in 0.5.0) | Not yet confirmed — the Gen 5 heat pump unit doesn't report it |
 | Water heater: gas, tankless and electric-only units | Not yet tested — reports welcome |
 
 ---

@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.5.0-beta.5
+ * Version: 0.5.0
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -89,7 +89,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.5.0-beta.5"
+@Field String DRIVER_VERSION = "0.5.0"
 @Field String LOG_TAG        = "EcoNet WH"
 @Field String UNIT_NOUN      = "water heater"
 @Field String UNIT_TITLE     = "Water heater"

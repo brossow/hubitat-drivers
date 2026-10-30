@@ -18,7 +18,8 @@ Each driver is self-contained — no parent app required.
 | Thermostat: cool, heat, auto (heating and cooling), fan only, idle | Verified |
 | Thermostat: several thermostats on one account | Verified by a community user |
 | Thermostat: zoned systems | Not yet tested — reports welcome |
-| Water heater: heat pump Gen 4 and Gen 5 (modes, setpoint, on/off, away mode commands) | Verified by community users |
+| Water heater: heat pump Gen 4 and Gen 5 (modes, setpoint, on/off) | Verified by community users |
+| Water heater: away mode | Rheem accepts the command, but on a Gen 4 heat pump unit the app didn't show the heater as away. Under investigation |
 | Water heater: hot water level | Verified on a Gen 5 heat pump unit (the Gen 4 doesn't report it) |
 | Water heater: Product Health (new in 0.5.0) | Verified on a Gen 5 heat pump unit (the Gen 4 doesn't report it) |
 | Water heater: energy use (new in 0.5.0) | Verified against the app on a Gen 5 heat pump unit; also reported by a Gen 4 |

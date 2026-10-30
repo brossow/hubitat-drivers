@@ -275,23 +275,44 @@ class WaterHeaterTests {
         assert start([type: "heatpumpWaterHeaterGen5", combustion: 70]).d.current("compressorHealth") == 70
     }
 
-    void testRawHealthFieldsLoggedOncePerSession() {
-        def ctx = start([leakInstalled: 1, tank: 85])
-        def lines = { ctx.d.log.at("debug").findAll { it.contains("Product Health fields") } }
-        assert lines().size() == 1
-        assert lines()[0].contains('@TANK={"value":85}')
-        assert lines()[0].contains("@COMBUSTION=absent")
-        assert ctx.d.log.at("debug").any { it.contains("Fields reported:") && it.contains("@LEAKINSTALLED") }
+    void testHealthStatusText() {
+        // As a Gen 5 heat pump unit reported it (2026-10-29)
+        def d = start([type: "heatpumpWaterHeaterGen5", tank: 100, tankStatus: "Element operating normally",
+                       combustion: 100, combustionStatus: "Compressor life is normal"]).d
+        assert d.current("tankHealthStatus") == "Element operating normally"
+        assert d.current("compressorHealthStatus") == "Compressor life is normal"
+        def plain = start([tank: 90]).d
+        assert plain.eventsNamed("tankHealthStatus").isEmpty(), "no status, no attribute"
+        def gas = start([type: "gasWaterHeater", modes: null, combustion: 70, combustionStatus: "Combustion OK"]).d
+        assert gas.eventsNamed("compressorHealthStatus").isEmpty()
+    }
+
+    void testEveryFieldLoggedOncePerSessionWithoutIdentifiers() {
+        def unit = Fixtures.waterHeater([leakInstalled: 1, tank: 85])
+        unit["@CONFIG"] = [value: "contains 00-00-00-00-00-00-bb-01-01 and DEVICE-WH-0001"]
+        def ctx = Fixtures.connected(FILE, Fixtures.account([unit]))
+        ctx.d.exec("initialize")
+        def debug = { ctx.d.log.at("debug") }
+        assert debug().count { it.startsWith("EcoNet WH: Fields reported:") } == 1
+        assert debug().any { it.contains('Field @TANK = {"value":85,"status":""}') }
+        assert debug().any { it.contains("Field @LEAKINSTALLED = ") }
+        assert !debug().any { it.contains("Field @NAME") }, "the unit's name stays out"
+        def config = debug().find { it.contains("Field @CONFIG") }
+        assert config.contains("…1-01") && config.contains("…0001")
+        assert !config.contains("00-00-00-00-00-00-bb-01-01") && !config.contains("DEVICE-WH-0001")
+        int lines = debug().size()
         ctx.d.exec("fetchEquipment")
-        assert lines().size() == 1
+        assert !debug().drop(lines).any { it.contains("Field ") }, "once a session"
     }
 
     // ---- energy and water use ---------------------------------------------------------
 
     // The test clock is 2027-01-15 08:00 UTC, and the hub's time zone UTC unless a
-    // test sets one: hour 8 of 2027-01-15, so yesterday is 2027-01-14.
-    static final Map TODAY_KWH     = [0: 0.1, 5: 0.6, 8: 0.4]
-    static final Map YESTERDAY_KWH = [3: 1.0, 8: 5.0, 9: 0.7, 23: 0.2]
+    // test sets one: 08:00 on 2027-01-15, so yesterday is 2027-01-14. Entries are named
+    // for the hour they end, so the current hour (08:00–09:00) is entry 9, and entry 0
+    // is 23:00–24:00.
+    static final Map TODAY_KWH     = [1: 0.1, 5: 0.6, 9: 0.4]
+    static final Map YESTERDAY_KWH = [3: 1.0, 9: 5.0, 10: 0.7, 0: 0.2]
 
     static List usageRequests(Map ctx, String type = null, String day = null) {
         ctx.api.usageRequests.findAll { r ->
@@ -313,7 +334,7 @@ class WaterHeaterTests {
         ctx.d.fire("fetchUsage")
         assert ctx.d.current("energy") == 1.1
         assert ctx.d.eventsNamed("energy")[-1].unit == "kWh"
-        // Today's hours 0–8, plus yesterday's after hour 8
+        // Today's entries 1–9, plus yesterday's 10–24, including its last hour ("0")
         assert ctx.d.current("energyLast24Hours") == 2.0
         assert ctx.d.eventsNamed("energyLast24Hours")[-1].unit == "kWh"
 
@@ -334,9 +355,9 @@ class WaterHeaterTests {
         def req = usageRequests(ctx, "energyUsage", "2027-01-15")[0]
         assert req.start_date == "2027-01-15T00:00:00.999-06:00"
         assert req.end_date == "2027-01-15T23:59:59.999-06:00"
-        // Hour 2: today's hour 0, plus yesterday's 3, 8, 9 and 23
+        // 02:00: today's entries 1–3, plus yesterday's 4–24 (9, 10 and 0)
         assert ctx.d.current("energy") == 1.1, "today's total counts every hour reported"
-        assert ctx.d.current("energyLast24Hours") == 7.0
+        assert ctx.d.current("energyLast24Hours") == 6.0
     }
 
     void testYesterdayIsKeptOnceItHasSettled() {
@@ -358,17 +379,17 @@ class WaterHeaterTests {
     void testANewDayStartsTodaysTotalAgain() {
         def ctx = start()
         ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH,
-                                       "2027-01-16": [0: 0.3]]]
+                                       "2027-01-16": [1: 0.3]]]
         ctx.d.fire("fetchUsage")
         ctx.d.advance(16 * 3_600_000L + 5 * 60_000L)   // 00:05 on 2027-01-16
         ctx.d.exec("fetchUsage")
         assert ctx.d.current("energy") == 0.3
-        assert ctx.d.current("energyLast24Hours") == 1.3, "hour 0 today (0.3) plus hours 1–23 of yesterday (0.6 + 0.4)"
+        assert ctx.d.current("energyLast24Hours") == 1.3, "today's entry 1 (0.3) plus yesterday's 2–24 (0.6 + 0.4)"
     }
 
     void testWaterUsage() {
         def ctx = start()
-        ctx.api.usage = [waterUsage: ["2027-01-15": [6: 12.5, 7: 3.0], "2027-01-14": [20: 30.0]]]
+        ctx.api.usage = [waterUsage: ["2027-01-15": [6: 12.5, 7: 3.0], "2027-01-14": [20: 30.0, 9: 99.0]]]
         ctx.d.fire("fetchUsage")
         assert ctx.d.current("waterUsageToday") == 15.5
         assert ctx.d.current("waterUsageLast24Hours") == 45.5
@@ -461,5 +482,38 @@ class WaterHeaterTests {
         ctx.d.exec("fetchUsage")
         def all = ctx.d.log.all().join("\n")
         ["DEVICE-WH-0001", "00-00-00-00-00-00-bb-01-01", "00000000000000bb0101"].each { assert !all.contains(it), it }
+    }
+
+    void testRollingWindowBoundaries() {
+        // Real Gen 5 data shape: 24 entries arriving 1…23 then 0. At 18:24 CDT the app's
+        // 24 Hrs. total was 2.2 and today's message said 1.6 kWh.
+        def ctx = start()
+        ctx.d.location.timeZone = TimeZone.getTimeZone("America/Chicago")
+        ctx.d.clock = Date.parse("yyyy-MM-dd HH:mm Z", "2026-10-29 18:24 -0500").time
+        def day = { Map v -> ((1..23) + [0]).collectEntries { h -> [(h): v[h] ?: 0] } }
+        ctx.api.usage = [energyUsage: [
+            "2026-10-29": day([3: 0.1, 9: 0.7, 11: 0.4, 15: 0.3, 17: 0.1]),
+            "2026-10-28": day([7: 0.1, 9: 0.5, 11: 0.7, 17: 0.1, 21: 0.6])]]
+        ctx.d.exec("fetchUsage")
+        assert ctx.d.current("energy") == 1.6
+        assert ctx.d.current("energyLast24Hours") == 2.2
+
+        // The hour now in progress counts, and yesterday's matching hour doesn't
+        ctx.api.usage.energyUsage["2026-10-29"][19] = 0.5
+        ctx.api.usage.energyUsage["2026-10-28"][19] = 9.0
+        ctx.api.usage.energyUsage["2026-10-28"][20] = 0.2
+        ctx.api.usage.energyUsage["2026-10-28"][0] = 0.3
+        ctx.d.state.remove("energyYesterday")
+        ctx.d.exec("fetchUsage")
+        assert ctx.d.current("energyLast24Hours") == 3.2   // 2.1 today + 0.2 + 0.6 + 0.3 yesterday
+    }
+
+    void testUsageMessageIsTidiedForTheLog() {
+        def ctx = start()
+        ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
+        ctx.api.usageMessages.energyUsage = "\nYou've used <b>1.1</b> kWh units of energy\n\n"
+        ctx.d.fire("fetchUsage")
+        assert ctx.d.log.at("debug").any { it.endsWith("(You've used 1.1 kWh units of energy)") }
+        assert ctx.d.current("energy") == 1.1
     }
 }

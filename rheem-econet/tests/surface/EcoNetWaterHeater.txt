@@ -18,6 +18,8 @@ attribute leakSensor enum [connected, not connected]
 attribute shutoffValve enum [open, closed]
 attribute tankHealth number
 attribute compressorHealth number
+attribute tankHealthStatus string
+attribute compressorHealthStatus string
 attribute energyLast24Hours number
 attribute waterUsageToday number
 attribute waterUsageLast24Hours number

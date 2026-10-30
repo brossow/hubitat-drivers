@@ -217,6 +217,8 @@ Not all modes are available on every device — the `supportedWaterHeaterModes` 
 | `shutoffValve` | `open` / `closed` | Shut-off valve position |
 | `tankHealth` | % | Shown as **Element Health** in the app on heat pump units |
 | `compressorHealth` | % | Compressor health — heat pump units only |
+| `tankHealthStatus` | text | The app's wording under the bar, e.g. "Element operating normally" |
+| `compressorHealthStatus` | text | e.g. "Compressor life is normal" — heat pump units only |
 
 The usage figures come from the app's Usage Report and are read at five past every hour, since the report changes about that often. Gas heaters report energy in kBTU, so the energy attributes stay empty on them; water use is reported where the heater measures it.
 

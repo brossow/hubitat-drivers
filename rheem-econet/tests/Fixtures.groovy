@@ -88,8 +88,8 @@ class Fixtures {
         // Product Health, as pyeconet reads it
         if (o.containsKey("leakInstalled")) w["@LEAKINSTALLED"] = [value: o.leakInstalled]
         if (o.containsKey("valve"))         w["@VALVESTATUS"]   = [title: o.valve, value: 0]
-        if (o.containsKey("tank"))          w["@TANK"]          = [value: o.tank]
-        if (o.containsKey("combustion"))    w["@COMBUSTION"]    = [value: o.combustion]
+        if (o.containsKey("tank"))          w["@TANK"]          = [value: o.tank, status: o.tankStatus ?: ""]
+        if (o.containsKey("combustion"))    w["@COMBUSTION"]    = [value: o.combustion, status: o.combustionStatus ?: ""]
         if (o.error) w.error = o.error
         return w
     }

@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.5.0-beta.3
+ * Version: 0.5.0-beta.4
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -50,6 +50,8 @@ metadata {
         attribute "shutoffValve",              "enum", ["open", "closed"]
         attribute "tankHealth",                "number"   // % — "Element Health" in the app on heat pump units
         attribute "compressorHealth",          "number"   // % — heat pump units only
+        attribute "tankHealthStatus",          "string"   // the app's text, e.g. "Element operating normally"
+        attribute "compressorHealthStatus",    "string"   // e.g. "Compressor life is normal"
         // Usage Report. energy (EnergyMeter) is today's kWh; these are the rest.
         attribute "energyLast24Hours",         "number"   // kWh
         attribute "waterUsageToday",           "number"   // gallons
@@ -86,7 +88,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.5.0-beta.3"
+@Field String DRIVER_VERSION = "0.5.0-beta.4"
 @Field String LOG_TAG        = "EcoNet WH"
 @Field String UNIT_NOUN      = "water heater"
 @Field String UNIT_TITLE     = "Water heater"
@@ -120,10 +122,6 @@ metadata {
     "performance"  : "PERFORMANCE",
     "vacation"     : "VACATION",
 ]
-
-// Equipment fields behind Product Health, logged raw at debug level so a new unit's
-// values can be checked against what the Rheem app shows.
-@Field List HEALTH_FIELDS = ["@LEAKINSTALLED", "@VALVESTATUS", "@TANK", "@COMBUSTION"]
 
 // Modes in which the heater is not keeping water hot. Off for the Switch capability as
 // well as for thermostatMode, so the two never disagree; on() restores the last other mode.
@@ -178,14 +176,9 @@ void applyUnit(Map equip) {
     state.setpointLow   = equip["@SETPOINT"]?.constraints?.lowerLimit
     state.setpointHigh  = equip["@SETPOINT"]?.constraints?.upperLimit
 
-    // Once a session: which fields this unit reports, and the raw Product Health values.
-    // None of these carry an identifier.
     if (!state.fieldsLogged) {
         state.fieldsLogged = true
-        logDebug "Fields reported: ${equip.keySet().findAll { it.toString().startsWith('@') }.sort()}"
-        logDebug "Product Health fields: " + HEALTH_FIELDS.collect { k ->
-            "${k}=${equip[k] != null ? JsonOutput.toJson(equip[k]) : 'absent'}"
-        }.join(", ")
+        logFields(equip)
     }
 
     updateAttributes(equip)
@@ -277,12 +270,37 @@ void updateProductHealth(Map equip) {
 
     def tank = percentValue(equip["@TANK"])
     if (tank != null) sendEvent(name: "tankHealth", value: tank, unit: "%")
+    def tankStatus = statusText(equip["@TANK"])
+    if (tankStatus) sendEvent(name: "tankHealthStatus", value: tankStatus)
 
     // On a heat pump unit @COMBUSTION is the compressor's health. On a gas heater the
     // same field presumably means combustion, which is unverified, so it isn't reported.
     if ((state.genericType as String)?.toLowerCase()?.contains("heatpump")) {
         def compressor = percentValue(equip["@COMBUSTION"])
         if (compressor != null) sendEvent(name: "compressorHealth", value: compressor, unit: "%")
+        def compressorStatus = statusText(equip["@COMBUSTION"])
+        if (compressorStatus) sendEvent(name: "compressorHealthStatus", value: compressorStatus)
+    }
+}
+
+// The text the app shows under a Product Health bar
+String statusText(def field) {
+    def s = (field instanceof Map) ? field.status?.toString()?.trim() : null
+    return s ?: null
+}
+
+// Once a session, at debug level: every field this unit reports and its value, so a
+// new unit can be checked against the app and its other fields understood. The
+// unit's name is left out, and any identifier inside a value is masked, because
+// people paste these logs into the forum.
+void logFields(Map equip) {
+    def fields = equip.keySet().findAll { it.toString().startsWith("@") }.sort()
+    logDebug "Fields reported: ${fields}"
+    def ids = [equip.serial_number, equip.device_name, state.accountId].findAll { it }*.toString()
+    fields.findAll { it != "@NAME" }.each { k ->
+        def text = JsonOutput.toJson(equip[k])
+        ids.each { id -> text = text.replace(id, maskId(id)) }
+        logDebug "Field ${k} = ${text}"
     }
 }
 
@@ -297,9 +315,11 @@ Integer percentValue(def field) {
 //
 // The Rheem app's Usage Report. It isn't in the regular poll: each kind takes a
 // request of its own, made hourly, at five past, so a new day's total appears soon
-// after midnight. A request covers one calendar day and returns an entry per hour.
-// Today's total is the sum of today's hours; the last 24 hours add yesterday's
-// hours after the current one. Yesterday's hours are kept rather than fetched every
+// after midnight. A request covers one calendar day and returns an entry per hour,
+// named for the hour it ENDS: "1" is midnight to 1 am, and "0" is 11 pm to midnight
+// (the entries arrive 1, 2 … 23, 0). Today's total is the sum of today's hours; the
+// last 24 hours are today's up to and including the current one, plus yesterday's
+// later ones. Yesterday's hours are kept rather than fetched every
 // hour, and refreshed until 3 am in case late readings are still arriving.
 // ---------------------------------------------------------------------------
 @Field Map USAGE_KINDS = [
@@ -345,7 +365,7 @@ void updateUsage(String kind, Map k) {
         usageFailed(kind, k, result.reason as String)
         return
     }
-    logDebug "${k.label.capitalize()} ${today}: ${describeHours(result.hours as Map)} (${result.message ?: 'no message'})"
+    logDebug "${k.label.capitalize()} ${today}: ${describeHours(result.hours as Map)} (${plainMessage(result.message)})"
 
     String unit = usageUnit(kind, result.message as String)
     if (unit == null) {
@@ -361,8 +381,9 @@ void updateUsage(String kind, Map k) {
 
     Map past = yesterdayHours(kind, k, yesterday, tz)
     if (past == null) return   // no last-24-hours figure is better than a wrong one
-    def window = todayHours.findAll { h, v -> (h as int) <= hour }.values() +
-                 past.findAll { h, v -> (h as int) > hour }.values()
+    // At 18:24 the current hour is entry 19, so: today's 1–19 and yesterday's 20–24
+    def window = todayHours.findAll { h, v -> hourEnding(h) <= hour + 1 }.values() +
+                 past.findAll { h, v -> hourEnding(h) > hour + 1 }.values()
     sendEvent(name: k.last24Attr, value: usageTotal(window), unit: unit)
 }
 
@@ -447,6 +468,18 @@ BigDecimal usageTotal(Collection values) {
     BigDecimal total = 0
     values.each { total += it as BigDecimal }
     return total.setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
+// An entry's name as the hour it ends, 1–24: "0" is the hour ending at midnight
+int hourEnding(def name) {
+    int h = name as int
+    return h == 0 ? 24 : h
+}
+
+// The response message for the debug log: it carries HTML and line breaks
+String plainMessage(def message) {
+    def s = message?.toString()?.replaceAll(/<[^>]*>/, "")?.replaceAll(/\s+/, " ")?.trim()
+    return s ?: "no message"
 }
 
 String describeHours(Map hours) {

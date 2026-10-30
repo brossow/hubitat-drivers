@@ -332,8 +332,10 @@ class WaterHeaterTests {
         def ctx = start()
         ctx.api.usage = [energyUsage: ["2027-01-15": TODAY_KWH, "2027-01-14": YESTERDAY_KWH]]
         ctx.d.fire("fetchUsage")
-        assert ctx.d.current("energy") == 1.1
+        assert ctx.d.current("energyToday") == 1.1
+        assert ctx.d.current("energy") == 1.1, "EnergyMeter's attribute carries the same value"
         assert ctx.d.eventsNamed("energy")[-1].unit == "kWh"
+        assert ctx.d.eventsNamed("energyToday")[-1].unit == "kWh"
         // Today's entries 1–9, plus yesterday's 10–24, including its last hour ("0")
         assert ctx.d.current("energyLast24Hours") == 2.0
         assert ctx.d.eventsNamed("energyLast24Hours")[-1].unit == "kWh"
@@ -426,6 +428,7 @@ class WaterHeaterTests {
         ctx.api.usageMessages.energyUsage = "Energy Usage in kBTU"
         ctx.d.fire("fetchUsage")
         assert ctx.d.current("energy") == null
+        assert ctx.d.current("energyToday") == null
         assert ctx.d.current("energyLast24Hours") == null
         assert ctx.d.log.at("info").count { it.contains("kBTU") } == 1
         assert ctx.d.current("waterUsageToday") == 5

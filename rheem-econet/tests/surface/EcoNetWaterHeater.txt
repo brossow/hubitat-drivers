@@ -20,6 +20,7 @@ attribute tankHealth number
 attribute compressorHealth number
 attribute tankHealthStatus string
 attribute compressorHealthStatus string
+attribute energyToday number
 attribute energyLast24Hours number
 attribute waterUsageToday number
 attribute waterUsageLast24Hours number

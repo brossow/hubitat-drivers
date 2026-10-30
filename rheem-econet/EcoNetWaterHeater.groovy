@@ -1,6 +1,6 @@
 /**
  * Rheem EcoNet Water Heater — Hubitat Driver
- * Version: 0.5.0-beta.4
+ * Version: 0.5.0-beta.5
  *
  * Inspired by the Home Assistant pyeconet integration.
  * Uses the ClearBlade cloud REST API for polling and MQTT command publishing.
@@ -52,7 +52,8 @@ metadata {
         attribute "compressorHealth",          "number"   // % — heat pump units only
         attribute "tankHealthStatus",          "string"   // the app's text, e.g. "Element operating normally"
         attribute "compressorHealthStatus",    "string"   // e.g. "Compressor life is normal"
-        // Usage Report. energy (EnergyMeter) is today's kWh; these are the rest.
+        // Usage Report. energy (EnergyMeter) is today's kWh too; these say what they are.
+        attribute "energyToday",               "number"   // kWh — same as energy, named for what it is
         attribute "energyLast24Hours",         "number"   // kWh
         attribute "waterUsageToday",           "number"   // gallons
         attribute "waterUsageLast24Hours",     "number"   // gallons
@@ -88,7 +89,7 @@ metadata {
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-@Field String DRIVER_VERSION = "0.5.0-beta.4"
+@Field String DRIVER_VERSION = "0.5.0-beta.5"
 @Field String LOG_TAG        = "EcoNet WH"
 @Field String UNIT_NOUN      = "water heater"
 @Field String UNIT_TITLE     = "Water heater"
@@ -324,7 +325,10 @@ Integer percentValue(def field) {
 // ---------------------------------------------------------------------------
 @Field Map USAGE_KINDS = [
     energy: [label: "energy use", usageType: "energyUsage", resultKey: "energy_usage",
-             todayAttr: "energy", last24Attr: "energyLast24Hours"],
+             todayAttr: "energyToday", last24Attr: "energyLast24Hours",
+             // EnergyMeter's own attribute, for apps that look for the capability. Same
+             // value as energyToday, which is there so the device page says what it is.
+             standardAttr: "energy"],
     water : [label: "water use",  usageType: "waterUsage",  resultKey: "water_usage",
              todayAttr: "waterUsageToday", last24Attr: "waterUsageLast24Hours"],
 ]
@@ -376,7 +380,9 @@ void updateUsage(String kind, Map k) {
     }
 
     Map todayHours = result.hours as Map
-    sendEvent(name: k.todayAttr, value: usageTotal(todayHours.values()), unit: unit)
+    def total = usageTotal(todayHours.values())
+    sendEvent(name: k.todayAttr, value: total, unit: unit)
+    if (k.standardAttr) sendEvent(name: k.standardAttr, value: total, unit: unit)
     state.remove(kind + "ErrorLogged")
 
     Map past = yesterdayHours(kind, k, yesterday, tz)

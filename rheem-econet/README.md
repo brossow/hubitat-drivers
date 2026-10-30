@@ -179,7 +179,7 @@ In auto mode the thermostat itself decides when to start heating or cooling, and
 ### Features
 - Reads setpoint, operating mode, running state, and hot water tank level
 - Reads Product Health, as the Rheem app shows it: leak sensor, shut-off valve, tank (element) health and compressor health — on units that have them
-- Reports energy and water use from the Rheem app's Usage Report: today so far, and the last 24 hours like the app's 24 Hrs. view. Today's energy is the standard `EnergyMeter` attribute
+- Reports energy and water use from the Rheem app's Usage Report: today so far, and the last 24 hours like the app's 24 Hrs. view. Today's energy is also reported as the standard `EnergyMeter` attribute, `energy`
 - Sets temperature, mode, and away mode
 - `Switch` capability maps to water heater on/off (restores last active mode when turned on). Vacation mode counts as off
 - `ThermostatMode` capability exposes `heat` / `auto` / `emergency heat` / `off` for Rule Machine compatibility
@@ -209,7 +209,8 @@ Not all modes are available on every device — the `supportedWaterHeaterModes` 
 | `hotWaterLevel` | 0 / 33 / 66 / 100 | Tank hot water availability |
 | `awayMode` | `away` / `home` | Away mode state |
 | `online` | `true` / `false` | Device connectivity |
-| `energy` | kWh | Energy used today so far. Starts again at midnight |
+| `energyToday` | kWh | Energy used today so far. Starts again at midnight |
+| `energy` | kWh | The same value as `energyToday`. It's the standard `EnergyMeter` attribute, which energy apps and integrations look for |
 | `energyLast24Hours` | kWh | Energy used in the last 24 hours, like the app's 24 Hrs. view |
 | `waterUsageToday` | gallons | Hot water used today so far. Starts again at midnight |
 | `waterUsageLast24Hours` | gallons | Hot water used in the last 24 hours |

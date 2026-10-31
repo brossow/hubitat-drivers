@@ -249,6 +249,19 @@ The Product Health and usage attributes only appear if your heater reports them.
 - **Brief outages are normal**: EcoNet occasionally times out, and a hub's DNS can blip. The driver keeps the last readings and tries again at the next poll. A run of failed polls logs one warning when it starts and one line when it's reaching EcoNet again; it's logged as an error only if it lasts half an hour.
 - **Multiple devices**: One Hubitat device controls one physical unit — see [If you have more than one thermostat or water heater](#if-you-have-more-than-one-thermostat-or-water-heater) above.
 
+## Making your own numbers
+
+These drivers report what your thermostat or water heater tells Rheem, and they control what Rheem lets them control. They don't add numbers of their own that the driver can't check, such as estimates that depend on your tank size or your electric rate. You know those details better than the driver does. A hub variable and a short rule in Rule Machine (or webCoRE) will usually give you exactly what you want, labelled the way you like.
+
+A few ideas:
+
+- **Estimated hot water in gallons.** Set a variable to `hotWaterLevel`, then multiply it by your tank size and divide by 100. On a 50-gallon tank that gives 0, 16.5, 33 or 50. Read it as "at least this much", because the heater reports the level in only four steps.
+- **What the water heater costs to run.** Multiply `energyLast24Hours` by your electric rate per kWh. Run the rule just before midnight with `energyToday` instead, and you get a daily cost you can log or keep a running total of.
+- **Low hot water warning.** Send a notification when `hotWaterLevel` drops to 33 or 0. Restricting the rule to the morning helps if you shower at a set time.
+- **Thermostat falling behind.** Send a notification when `temperature` stays more than a few degrees below `heatingSetpoint` for an hour. That can point to a furnace problem before the house gets cold.
+
+If you build one you like, share it in the [community thread](https://community.hubitat.com/t/drivers-rheem-econet-thermostat-water-heater/163127) so others can use it too.
+
 ## Asking for help
 
 Post in the [community thread](https://community.hubitat.com/t/drivers-rheem-econet-thermostat-water-heater/163127). It helps to include:

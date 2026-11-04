@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station - Hubitat App
- * Version: 0.5.0
+ * Version: 0.6.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -24,6 +24,9 @@ import groovy.transform.Field
 // Only one execution renews at a time; the rest wait and then use what it got.
 @Field static final java.util.concurrent.Semaphore tokenLock = new java.util.concurrent.Semaphore(1)
 @Field static long tokenLockTakenAt = 0L
+// The latest station data, so a rule refreshing several devices makes one Netatmo call
+// rather than one per device. getstationsdata returns every module at once.
+@Field static final java.util.concurrent.ConcurrentHashMap stationCache = new java.util.concurrent.ConcurrentHashMap()
 
 definition(
     name: "Netatmo Weather Station",
@@ -44,13 +47,24 @@ preferences {
 
 mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
+    path("/webhook") { action: [POST: "webhookEvent"] }
 }
 
-private String appVersion() { return "0.5.0" }
+private String appVersion() { return "0.6.0" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
 private Integer tokenRefreshBufferSeconds() { return 300 }
+private String webhooksPath() { return "/webhooks/v1/" }
+private Long rateLimitDefaultBackoffMs() { return 15 * 60000L }
+private Long rateLimitMaxBackoffMs() { return 60 * 60000L }
+private Long childRefreshCacheMs() { return 60000L }
+// Netatmo's cloud copy of station data changes about every 10 minutes, so two reads per
+// update is plenty however many events arrive.
+private Long webhookMinFetchSpacingMs() { return 5 * 60000L }
+private Long webhookFirstFetchDelayMs() { return 10000L }
+// Scheduled polls stand down only while events have been arriving this recently.
+private Long webhookCoverageWindowMs() { return 30 * 60000L }
 
 def installed() {
     log.info "Netatmo Weather Station installed"
@@ -64,6 +78,13 @@ def updated() {
 
 def uninstalled() {
     unschedule()
+    if (atomicState.webhookRegistered == true) {
+        try {
+            unregisterWebhook()
+        } catch (Exception e) {
+            log.warn "Could not remove the Netatmo webhook while uninstalling: ${exceptionSummary(e)}"
+        }
+    }
     log.info "Netatmo Weather Station uninstalled"
 }
 
@@ -73,7 +94,11 @@ def initialize() {
     state.appVersion = appVersion()
     migrateNetatmoTokenState()
     ensureEndpointAccessToken()
+    stationCache.remove(app.id)   // unit preferences may have changed
     schedulePolling()
+    if (settings.useWebhooks == true || atomicState.webhookRegistered == true) {
+        runIn(3, "syncWebhookRegistration")
+    }
 }
 
 def mainPage() {
@@ -250,11 +275,26 @@ def mainPage() {
                 input name: "reschedulePolling",
                     type: "button",
                     title: "Reschedule polling"
+                paragraph "Netatmo updates its copy of your station's readings about every 10 minutes, so polling more often than that doesn't get newer values."
                 String healthWarning = pollHealthWarningText()
                 if (healthWarning) {
                     paragraph healthWarning
                 }
                 paragraph pollStatusText()
+            }
+
+            section("Webhooks (beta)") {
+                paragraph "Netatmo can tell the hub when your station has something new, instead of the hub asking on a schedule. Scheduled polling stays set up as the fallback, and stands down while webhooks are arriving."
+                input name: "useWebhooks",
+                    type: "bool",
+                    title: "Receive webhooks from Netatmo",
+                    defaultValue: false,
+                    required: false
+                paragraph webhookStatusText()
+                Map sample = atomicState.webhookLastPayload instanceof Map ? (Map)atomicState.webhookLastPayload : null
+                if (sample) {
+                    paragraph "<b>Latest webhook received</b> (${escapeHtml(formatTimestamp(sample.at))}), with names and IDs hidden:<pre style=\"white-space:pre-wrap;\">${escapeHtml(sample.json as String)}</pre>"
+                }
             }
         }
 
@@ -360,7 +400,7 @@ def appButtonHandler(String buttonName) {
     }
 
     if (buttonName == "runPollNow") {
-        poll()
+        pollSafely()
         return
     }
 
@@ -370,6 +410,9 @@ def appButtonHandler(String buttonName) {
     }
 
     if (buttonName == "clearAuthorization") {
+        if (atomicState.webhookRegistered == true) {
+            unregisterWebhook()
+        }
         clearAuthState()
         state.lastDiagnosticStatus = "Authorization cleared."
         state.lastDiscoveryStatus = "Authorization cleared. Discovery cache was not refreshed."
@@ -646,12 +689,17 @@ private Boolean tokenRefreshRejected(Integer status) {
     return status == 400 || status == 401
 }
 
-Map apiRequest(String method, String path, Map query = [:], Map body = null) {
+Map apiRequest(String method, String path, Map query = [:], Object body = null) {
     return apiRequestInternal(method, path, query, body, true)
 }
 
-private Map apiRequestInternal(String method, String path, Map query = [:], Map body = null, Boolean allowRetry) {
+private Map apiRequestInternal(String method, String path, Map query = [:], Object body = null, Boolean allowRetry) {
     String verb = (method ?: "GET").toUpperCase()
+
+    if (rateLimited()) {
+        debugLog "Netatmo API ${verb} ${path} skipped: waiting out the rate limit"
+        return [success: false, status: 429, data: null, error: rateLimitText()]
+    }
 
     if (!ensureValidToken()) {
         log.error "Netatmo API request skipped: authentication is not valid"
@@ -682,6 +730,14 @@ private Map apiRequestInternal(String method, String path, Map query = [:], Map 
             httpPost(requestParams) { resp ->
                 result = [success: successStatus(resp?.status), status: resp?.status, data: resp?.data, error: null]
             }
+        } else if (verb == "PUT") {
+            httpPut(requestParams) { resp ->
+                result = [success: successStatus(resp?.status), status: resp?.status, data: resp?.data, error: null]
+            }
+        } else if (verb == "DELETE") {
+            httpDelete(requestParams) { resp ->
+                result = [success: successStatus(resp?.status), status: resp?.status, data: resp?.data, error: null]
+            }
         } else {
             log.error "Unsupported Netatmo API method: ${verb}"
             return [success: false, status: null, data: null, error: "Unsupported method: ${verb}"]
@@ -695,9 +751,18 @@ private Map apiRequestInternal(String method, String path, Map query = [:], Map 
         return result
     } catch (Exception e) {
         Integer status = responseStatusFromException(e)
+        Integer errorCode = netatmoErrorCode(e)
+
+        // "Too many requests" is not a token problem. Renewing and retrying would only
+        // spend more of the allowance, so hold off instead.
+        if (status == 429 || (status == 403 && errorCode == 26)) {
+            startRateLimitBackoff(e)
+            return [success: false, status: status, data: null, error: rateLimitText()]
+        }
+
         // Netatmo answers an expired or revoked access token with 403 (error codes 2
         // and 3), not 401, so both refresh the token and retry once.
-        if ((status == 401 || status == 403) && allowRetry) {
+        if (tokenProblem(status, errorCode) && allowRetry) {
             log.warn "Netatmo API request returned ${status}; refreshing token and retrying once"
             if (renewToken(accessTokenUsed)) {
                 return apiRequestInternal(method, path, query, body, false)
@@ -710,6 +775,52 @@ private Map apiRequestInternal(String method, String path, Map query = [:], Map 
         debugLog "Netatmo API exception details: ${e}"
         return [success: false, status: status, data: null, error: exceptionSummary(e)]
     }
+}
+
+// A 403 can also mean "forbidden" or "unable to execute", which a new token won't fix.
+// A 403 without a readable error code gets the benefit of the doubt: one renewal and retry.
+private Boolean tokenProblem(Integer status, Integer errorCode) {
+    if (status == 401) {
+        return true
+    }
+    return status == 403 && (errorCode == null || errorCode in [-2, -1, 1, 2, 3])
+}
+
+private Integer netatmoErrorCode(Exception e) {
+    try {
+        Object data = e?.response?.data
+        if (data instanceof String) {
+            data = parseJson(data as String)
+        }
+        return data instanceof Map && data.error instanceof Map ? safeInteger(data.error.code) : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+private void startRateLimitBackoff(Exception e) {
+    Long retryAfter = retryAfterSeconds(e)
+    Long backoff = retryAfter ? Math.min(Math.max(retryAfter * 1000L, 60000L), rateLimitMaxBackoffMs()) : rateLimitDefaultBackoffMs()
+    atomicState.netatmoRateLimitedUntil = now() + backoff
+    log.warn "Netatmo says this account has reached its API limit. ${rateLimitText()}"
+}
+
+private Long retryAfterSeconds(Exception e) {
+    try {
+        Object header = e?.response?.headers?."Retry-After"
+        return safeLong(header?.value)
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
+private Boolean rateLimited() {
+    Long until = safeLong(atomicState.netatmoRateLimitedUntil)
+    return until != null && now() < until
+}
+
+private String rateLimitText() {
+    return "Netatmo's API limit was reached; requests resume after ${formatTimestamp(atomicState.netatmoRateLimitedUntil)}."
 }
 
 Boolean exchangeCodeForTokens(String code) {
@@ -761,6 +872,9 @@ void clearAuthState() {
 void runPostAuthorizationSetup() {
     runStationsDataDiagnostic()
     runStationDiscovery()
+    if (settings.useWebhooks == true) {
+        syncWebhookRegistration()
+    }
 }
 
 void runStationsDataDiagnostic() {
@@ -844,7 +958,19 @@ void syncSelectedSupportedDevices() {
     log.info "Netatmo supported device sync complete: ${summary.created} created, ${summary.existing} existing, ${updated} updated"
 }
 
+// The scheduled handler. Stands down while webhooks are keeping the devices current.
 void poll() {
+    if (webhooksCoverPolling()) {
+        state.lastPollAt = now()
+        state.lastPollStatus = "Webhooks active"
+        state.lastPollMessage = "Scheduled poll not needed: the latest webhook arrived ${formatTimestamp(atomicState.webhookLastEventAt)}."
+        debugLog "Netatmo scheduled poll skipped: webhooks are arriving"
+        return
+    }
+    pollSafely()
+}
+
+void pollSafely() {
     try {
         pollInternal()
     } catch (Exception e) {
@@ -873,11 +999,19 @@ private void pollInternal() {
         return
     }
 
+    if (rateLimited()) {
+        state.lastPollAt = now()
+        state.lastPollStatus = "Waiting"
+        state.lastPollMessage = rateLimitText()
+        debugLog "Netatmo poll skipped: waiting out the rate limit"
+        return
+    }
+
     Map normalized = fetchAndNormalizeStations()
     if (normalized == null) {
         state.lastPollAt = now()
-        state.lastPollStatus = "Error"
-        state.lastPollMessage = "Station data could not be loaded."
+        state.lastPollStatus = rateLimited() ? "Waiting" : "Error"
+        state.lastPollMessage = rateLimited() ? rateLimitText() : "Station data could not be loaded."
         log.warn "Netatmo poll failed: station data could not be loaded"
         return
     }
@@ -923,11 +1057,17 @@ Map fetchAndNormalizeStations() {
 
     if (!result.success) {
         String message = "Station load failed${result.status ? ' with HTTP ' + result.status : ''}: ${result.error ?: 'unknown error'}"
-        log.error "Netatmo ${message}"
+        if (result.status == 429 || rateLimited()) {
+            log.warn "Netatmo ${message}"
+        } else {
+            log.error "Netatmo ${message}"
+        }
         return null
     }
 
     Map normalized = normalizeStationData(result.data)
+    stationCache[app.id] = [at: now(), data: normalized]
+    atomicState.lastStationFetchAt = now()
     state.lastDiscovery = normalized
     state.lastDiscoveryAt = now()
     state.lastDiscoveryStatus = normalized ? "Discovery found ${normalized.size()} supported or visible device(s)." : "Discovery succeeded, but no stations or modules were found."
@@ -1053,9 +1193,11 @@ void refreshChild(String dni) {
         return
     }
 
-    Map normalized = fetchAndNormalizeStations()
+    Map cached = stationCache[app.id] as Map
+    Boolean fresh = cached != null && now() - (cached.at as Long) < childRefreshCacheMs()
+    Map normalized = fresh ? (Map)cached.data : fetchAndNormalizeStations()
     if (normalized == null) {
-        log.error "Netatmo child refresh failed for ${dni}: station data could not be loaded"
+        log.warn "Netatmo child refresh failed for ${dni}: station data could not be loaded"
         return
     }
 
@@ -1807,6 +1949,264 @@ private String callbackUrl() {
         return ""
     }
     return "${getFullApiServerUrl()}/oauth/callback?access_token=${state.hubitatEndpointAccessToken}"
+}
+
+// ── Webhooks ─────────────────────────────────────────────────────────────────
+// An event wakes the normal read of station data rather than supplying values itself:
+// Netatmo doesn't document what a weather device_event contains, so nothing here depends
+// on it beyond the fields its docs promise for every event. The endpoint must answer
+// within 5 seconds, so it only ever schedules work.
+
+private String webhookUrl() {
+    if (!ensureEndpointAccessToken()) {
+        return ""
+    }
+    return "${getFullApiServerUrl()}/webhook?access_token=${state.hubitatEndpointAccessToken}"
+}
+
+void syncWebhookRegistration() {
+    if (state.netatmoAuthenticated != true) {
+        return
+    }
+
+    if (settings.useWebhooks == true) {
+        registerWebhook()
+    } else if (atomicState.webhookRegistered == true) {
+        unregisterWebhook()
+    }
+}
+
+private void registerWebhook() {
+    String url = webhookUrl()
+    if (!url) {
+        setWebhookStatus(false, "Webhooks are off: Hubitat app OAuth is not enabled.")
+        return
+    }
+
+    Map existing = apiRequest("GET", webhooksPath())
+    if (!existing.success) {
+        setWebhookStatus(false, "Could not check Netatmo's webhook list. ${webhookFailureText(existing)}")
+        return
+    }
+
+    if (registeredWebhookUrls(existing.data).contains(url)) {
+        setWebhookStatus(true, "Registered with Netatmo.")
+        return
+    }
+
+    Map added = apiRequest("POST", webhooksPath(), [:], [url: url])
+    if (added.success) {
+        setWebhookStatus(true, "Registered with Netatmo.")
+        log.info "Netatmo webhook registered"
+    } else {
+        setWebhookStatus(false, "Netatmo did not accept the webhook. ${webhookFailureText(added)}")
+    }
+}
+
+// Netatmo's DELETE removes every webhook on the account, so another hub's stays put by
+// removing only this one when others exist.
+private void unregisterWebhook() {
+    String url = webhookUrl()
+    Map existing = apiRequest("GET", webhooksPath())
+    if (!existing.success) {
+        setWebhookStatus(atomicState.webhookRegistered == true, "Could not remove the webhook. ${webhookFailureText(existing)}")
+        return
+    }
+
+    List urls = registeredWebhookUrls(existing.data)
+    if (!urls.contains(url)) {
+        setWebhookStatus(false, "Off.")
+        return
+    }
+
+    List remaining = urls.findAll { it != url }
+    Map removed = remaining
+        ? apiRequest("PUT", webhooksPath(), [:], remaining.collect { [url: it] })
+        : apiRequest("DELETE", webhooksPath())
+    if (removed.success) {
+        setWebhookStatus(false, "Off.")
+        log.info "Netatmo webhook removed"
+    } else {
+        setWebhookStatus(true, "Could not remove the webhook. ${webhookFailureText(removed)}")
+    }
+}
+
+private List registeredWebhookUrls(Object data) {
+    Map payload = responseDataAsMap(data)
+    List hooks = payload.body instanceof List ? (List)payload.body : []
+    return hooks.findAll { it instanceof Map && it.url }.collect { it.url as String }
+}
+
+private void setWebhookStatus(Boolean registered, String message) {
+    atomicState.webhookRegistered = registered
+    atomicState.webhookStatus = message
+}
+
+private String webhookFailureText(Map result) {
+    switch (result.status) {
+        case 400:
+            return "It refused this hub's address (HTTP 400)."
+        case 403:
+            return "It says this Netatmo application isn't allowed to use webhooks (HTTP 403)."
+        case 409:
+            return "This Netatmo application has reached its webhook limit (HTTP 409)."
+        default:
+            return (result.error ?: "HTTP ${result.status}") as String
+    }
+}
+
+String webhookStatusText() {
+    if (settings.useWebhooks != true && atomicState.webhookRegistered != true && !atomicState.webhookStatus) {
+        return "Off. After turning this on, click Done to register with Netatmo."
+    }
+
+    List parts = [atomicState.webhookStatus ?: "Click Done to register with Netatmo."]
+    if (atomicState.webhookLastEventAt) {
+        parts << "Latest webhook ${formatTimestamp(atomicState.webhookLastEventAt)} (${atomicState.webhookLastEventType})."
+    } else if (atomicState.webhookRegistered == true) {
+        parts << "No webhooks received yet; polling continues in the meantime."
+    }
+    if (atomicState.webhookRejectedCount) {
+        parts << "Rejected ${atomicState.webhookRejectedCount} with a bad or missing signature, the latest ${formatTimestamp(atomicState.webhookLastRejectedAt)}."
+    }
+    return parts.join(" ")
+}
+
+def webhookEvent() {
+    String rawBody = request?.body == null ? "" : request.body as String
+
+    if (!webhookSignatureValid(rawBody, webhookRequestHeader("X-Netatmo-secret"))) {
+        atomicState.webhookRejectedCount = (safeInteger(atomicState.webhookRejectedCount) ?: 0) + 1
+        atomicState.webhookLastRejectedAt = now()
+        log.warn "Netatmo webhook rejected: bad or missing signature"
+        return webhookResponse(401)
+    }
+
+    // Still answered with 200 when switched off, so Netatmo doesn't suspend the endpoint
+    // over a webhook that couldn't be removed.
+    if (settings.useWebhooks != true) {
+        return webhookResponse(200)
+    }
+
+    Map payload = null
+    try {
+        Object parsed = parseJson(rawBody)
+        payload = parsed instanceof Map ? (Map)parsed : null
+    } catch (Exception e) {
+        debugLog "Netatmo webhook body could not be parsed: ${exceptionSummary(e)}"
+    }
+
+    if (payload == null) {
+        log.warn "Netatmo webhook ignored: the body wasn't a JSON object"
+        return webhookResponse(200)
+    }
+
+    handleWebhookPayload(payload)
+    return webhookResponse(200)
+}
+
+private webhookResponse(Integer status) {
+    return render(contentType: "application/json", data: "{}", status: status)
+}
+
+private String webhookRequestHeader(String name) {
+    Map headers = request?.headers instanceof Map ? (Map)request.headers : [:]
+    def entry = headers.find { key, value -> (key as String).equalsIgnoreCase(name) }
+    def value = entry?.value
+    return value instanceof List ? (value ? value[0] as String : null) : value as String
+}
+
+private Boolean webhookSignatureValid(String rawBody, String signature) {
+    String secret = settings.clientSecret?.trim()
+    if (!signature || !secret) {
+        return false
+    }
+
+    javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256")
+    mac.init(new javax.crypto.spec.SecretKeySpec(secret.getBytes("UTF-8"), "HmacSHA256"))
+    String expected = mac.doFinal(rawBody.getBytes("UTF-8")).encodeHex().toString()
+    return java.security.MessageDigest.isEqual(expected.getBytes("UTF-8"), signature.trim().toLowerCase().getBytes("UTF-8"))
+}
+
+private void handleWebhookPayload(Map payload) {
+    String pushType = stringValue(payload.push_type) ?: "unknown"
+    atomicState.webhookLastEventAt = now()
+    atomicState.webhookLastEventType = pushType
+    // Keep the most useful sample on show: a device event, once there has been one
+    if (pushType == "device_event" || !atomicState.webhookLastPayload) {
+        atomicState.webhookLastPayload = [at: now(), json: webhookDiagnosticJson(payload)]
+    }
+
+    switch (pushType) {
+        case "webhook_activation":
+            setWebhookStatus(true, "Registered with Netatmo.")
+            break
+        case "webhook_deletion":
+            setWebhookStatus(false, "Netatmo reports this webhook was removed. Click Done to register it again.")
+            log.warn "Netatmo reports the webhook was removed; polling continues"
+            break
+        case "device_event":
+            scheduleWebhookRefresh()
+            break
+        default:
+            debugLog "Netatmo webhook ${pushType} needs no action"
+    }
+}
+
+// Netatmo may deliver bursts and repeats, so one read is scheduled at a time, soon after
+// the first event but never closer to the previous read than the minimum spacing.
+private void scheduleWebhookRefresh() {
+    Long current = now()
+    Long due = safeLong(atomicState.webhookRefreshDueAt)
+    if (due != null && due > current) {
+        return
+    }
+
+    Long lastFetch = safeLong(atomicState.lastStationFetchAt) ?: 0L
+    Long at = Math.max(current + webhookFirstFetchDelayMs(), lastFetch + webhookMinFetchSpacingMs())
+    atomicState.webhookRefreshDueAt = at
+    runIn(((at - current) / 1000L) as Integer, "webhookRefresh")
+}
+
+void webhookRefresh() {
+    atomicState.remove("webhookRefreshDueAt")
+    pollSafely()
+}
+
+private Boolean webhooksCoverPolling() {
+    if (settings.useWebhooks != true || atomicState.webhookRegistered != true) {
+        return false
+    }
+
+    Long lastEvent = safeLong(atomicState.webhookLastEventAt)
+    Long lastFetch = safeLong(atomicState.lastStationFetchAt)
+    return lastEvent != null && lastFetch != null &&
+        now() - lastEvent < webhookCoverageWindowMs() && now() - lastFetch < webhookCoverageWindowMs()
+}
+
+// The app page shows this so an event can be inspected and shared, so names, IDs and
+// addresses are hidden. It's capped because it lives in app state.
+private String webhookDiagnosticJson(Map payload) {
+    String json = groovy.json.JsonOutput.toJson(hideWebhookIdentifiers(payload))
+    return json.length() > 4000 ? json.substring(0, 4000) + " ...(cut off)" : json
+}
+
+private Object hideWebhookIdentifiers(Object value, String key = null) {
+    List hiddenKeys = ["user_id", "home_id", "home_name", "device_id", "id", "room_id", "name", "module_name", "station_name",
+        "bridge", "modules_bridged", "module_bridged", "coordinates", "place", "city", "street", "address"]
+    if (key != null && key.toLowerCase() in hiddenKeys) {
+        return "(hidden)"
+    }
+    if (value instanceof Map) {
+        return ((Map)value).collectEntries { k, v -> [(k): hideWebhookIdentifiers(v, k as String)] }
+    }
+    if (value instanceof List) {
+        return ((List)value).collect { hideWebhookIdentifiers(it) }
+    }
+    if (value instanceof String && value ==~ /(?i)([0-9a-f]{2}[:-]){5}[0-9a-f]{2}/) {
+        return "(hidden)"
+    }
+    return value
 }
 
 private void schedulePolling() {

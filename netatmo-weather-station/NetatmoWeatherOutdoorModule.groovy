@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Outdoor Module - Hubitat Driver
- * Version: 0.5.0
+ * Version: 0.6.0
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0

@@ -21,6 +21,8 @@ The integration uses Netatmo's cloud API with OAuth authentication. The parent H
 - User selection of discovered devices
 - Child devices for supported weather station modules
 - Scheduled polling
+- Optional webhooks from Netatmo (beta), with polling as the fallback
+- Backs off when Netatmo reports its API limit has been reached
 - Manual child refresh
 - Field diagnostics for raw and normalized data availability
 - App-level unit preferences
@@ -92,7 +94,7 @@ This entire step happens in a web browser on Netatmo's website. You are not touc
 
 *Your finished application should look like this. The redacted fields are the ones unique to your account — the two on the right, **client ID** and **client secret**, are what you copy into Hubitat.*
 
-**Leave the Redirect URI field empty**, exactly as shown above. This integration does not need one. If you are reusing an application you created earlier and that field already has a URL in it, clear it and save — otherwise authorization will fail with `redirect_uri_mismatch`.
+**Leave the Redirect URI and Webhook URI fields empty**, exactly as shown above. This integration does not need a Redirect URI, and if you turn on [webhooks](#webhooks-beta) it registers its own address with Netatmo. If you are reusing an application you created earlier and that field already has a URL in it, clear it and save — otherwise authorization will fail with `redirect_uri_mismatch`.
 
 The Netatmo token generator on that page is not needed. Hubitat handles the whole authorization exchange itself.
 
@@ -142,6 +144,21 @@ Polling updates existing selected child devices. It does not create child device
 Installing the package does not create devices by itself. Child devices are created only after authorization, discovery, selecting modules, and running **Create/update selected supported devices**.
 
 Use **Run poll now** to verify the data path immediately after changing the poll interval or saving the app. Use **Reschedule polling** if the app reports that scheduled polling appears stale.
+
+## Webhooks (beta)
+
+Netatmo announced on 4 November 2026 that it plans to reduce API rate limits for polling-based integrations from 1 March 2027, and it encourages moving to webhooks. It hasn't published the new numbers yet. Weather stations are supported.
+
+Webhooks are off unless you turn them on. To try them, turn on **Receive webhooks from Netatmo** in the **Webhooks (beta)** section and click **Done**. The integration registers the hub's cloud address with Netatmo, and the section shows whether that worked and when the latest webhook arrived. Turning the option off and clicking **Done**, or removing the integration, removes the registration.
+
+How it works:
+
+- Each webhook is checked against the signature Netatmo sends, made with your Client Secret. Anything that doesn't match is rejected and counted in the **Webhooks (beta)** section.
+- A webhook prompts the integration to read your station data straight away, at most once every 5 minutes. Netatmo doesn't document what a weather webhook contains, so the readings still come from the same place as polling.
+- Scheduled polls stand down while webhooks are arriving, and pick up again by themselves if none has arrived for 30 minutes. Netatmo doesn't keep events it couldn't deliver, so polling stays configured as the safety net. **Run poll now** and device refreshes still work as usual.
+- The section shows the latest webhook with names, IDs and addresses hidden, so it can be checked or shared when troubleshooting.
+
+Webhooks need Netatmo to reach your hub through Hubitat's cloud, so they don't arrive while the hub or its internet connection is down. The address includes the access token for this app's endpoint, and it's sent only to Netatmo.
 
 ## Unit Preferences
 
@@ -206,6 +223,8 @@ Field diagnostics remain visible until cleared with **Clear field diagnostics**.
 - Does not support Netatmo cameras, thermostats, smoke alarms, doorbells, or other non-weather product lines.
 - Depends on Netatmo API availability and account access.
 - Some module types may need broader real-hardware validation.
+- Netatmo updates the station data this integration reads about every 10 minutes, so polling more often than that doesn't get newer values.
+- Webhooks are a beta feature, and a webhook prompts a read of station data rather than carrying the values to the devices itself.
 - Polling does not create devices automatically.
 - Child devices are not deleted automatically.
 - Unit conversion assumes Netatmo API source units are Celsius, hPa/mbar, mm, and km/h.
@@ -284,10 +303,23 @@ Check that you clicked **Done** at the bottom right of the settings page. Until 
 - `lastSeen` may show the last module communication time even when current dashboard values are absent.
 - `measurementTime` is present only when Netatmo returns a dashboard reading timestamp.
 
+### Poll Status Says Netatmo's API Limit Was Reached
+
+Netatmo limits how many requests each account can make. When it says the limit has been reached, the integration stops calling it for the time Netatmo asks for, or 15 minutes if it doesn't say, and then carries on by itself. You stay authorized.
+
+If you see this often, choose a longer **Poll Interval**, and check for rules that refresh these devices frequently. Other software using the same Netatmo account can also count toward the limit.
+
+### Webhooks Aren't Arriving
+
+- Check the **Webhooks (beta)** section. It says whether registration worked, and if Netatmo refused it, why.
+- Polling carries on while there are no webhooks, so the devices keep updating.
+- If it reports rejected webhooks, re-enter your **Client Secret** from https://dev.netatmo.com/apps/ and click **Done**. The signature is made with it.
+- To register again, turn the option off, click **Done**, turn it back on, and click **Done**.
+
 ### Unit Changes Not Reflected
 
 - Unit preference changes apply when new normalized data is sent to child devices.
-- Refresh the child device, run manual sync, click **Run poll now**, or wait for the next scheduled poll.
+- Click **Done** to save them, then refresh the child device, run manual sync, click **Run poll now**, or wait for the next scheduled poll.
 
 ### Token or Authentication Failures
 
@@ -303,7 +335,7 @@ tests/run.sh               # everything
 tests/run.sh refresh       # only tests whose name contains "refresh"
 ```
 
-The off-hub tests load the app and drivers into a small stand-in for the Hubitat sandbox, with Netatmo's token endpoint and API faked so each test chooses how Netatmo answers: success, an outage, a rejected token, or no response at all. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
+The off-hub tests load the app and drivers into a small stand-in for the Hubitat sandbox, with Netatmo's token endpoint and API faked so each test chooses how Netatmo answers: success, an outage, a rejected token, a rate limit, a signed or forged webhook, or no response at all. All you need is Java 8 or later; Groovy 2.4.21, the version the hub runs, is downloaded on first use. GitHub Actions runs them on every push that touches this folder.
 
 ## Privacy and Security Notes
 
@@ -311,6 +343,8 @@ The off-hub tests load the app and drivers into a small stand-in for the Hubitat
 - Netatmo OAuth tokens are stored in Hubitat app state.
 - Logs should not expose the client secret, access token, or refresh token.
 - The integration communicates with Netatmo's cloud API.
+- With webhooks on, Netatmo sends events to this app's endpoint through Hubitat's cloud. The endpoint's access token is part of the address registered with Netatmo, and the integration doesn't log it.
+- The webhook shown on the integration page has names, IDs and addresses hidden, but check it before sharing it.
 
 ## License and Credits
 

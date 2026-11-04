@@ -15,7 +15,10 @@ gcl.parseClass('''
 // What Hubitat's http* methods throw for an HTTP error: the status is on e.response
 class FakeHttpError extends Exception {
   Map response
-  FakeHttpError(int status) { super("status code: ${status}"); response = [status: status] }
+  FakeHttpError(int status, Object data = null, Map headers = [:]) {
+    super("status code: ${status}")
+    response = [status: status, data: data, headers: headers]
+  }
 }
 abstract class HubStub extends Script {
   Map settingsMap = [:]
@@ -32,6 +35,14 @@ abstract class HubStub extends Script {
   List apiAnswers = []
   int tokenCalls = 0
   int apiCalls = 0
+  List apiLog = []
+  List scheduled = []
+  Map request = [:]
+  void receive(Map r) { request = r }
+  def getFullApiServerUrl() { "https://cloud.example/api/HUB/apps/1" }
+  def createAccessToken() { "ENDPOINT-TOKEN" }
+  def render(Map m) { m }
+  Object parseJson(String text) { new groovy.json.JsonSlurper().parseText(text) }
   def log = [error: { m -> logs << "error: $m" }, warn: { m -> logs << "warn: $m" },
              info: { m -> logs << "info: $m" }, debug: { m -> }]
   def location = [temperatureScale: "C", timeZone: TimeZone.getTimeZone("UTC")]
@@ -51,7 +62,8 @@ abstract class HubStub extends Script {
     }
   }
   void sendEvent(Map m) { events << m; attrs[m.name] = m.value }
-  void runIn(def s, String h) {}
+  void runIn(def s, String h) { scheduled << [seconds: s, handler: h] }
+  void runEvery5Minutes(String h) {}
   void unschedule(String h = null) {}
   def getChildDevice(String dni) { null }
   def getChildDevices() { [] }
@@ -62,13 +74,21 @@ abstract class HubStub extends Script {
     if (a instanceof Closure) a = a.call()
     if (a == null) throw new java.net.SocketTimeoutException("Read timed out")
     if (a instanceof Integer) throw new FakeHttpError(a as int)
+    if (a instanceof Exception) throw a
     return a
   }
   void httpPost(Map params, Closure c) {
     if (params.uri.toString().endsWith("/oauth2/token")) { synchronized (this) { tokenCalls++ }; c([status: 200, data: next(tokenAnswers)]) }
-    else { apiCalls++; c([status: 200, data: next(apiAnswers)]) }
+    else { api("POST", params, c) }
   }
-  void httpGet(Map params, Closure c) { apiCalls++; c([status: 200, data: next(apiAnswers)]) }
+  void httpGet(Map params, Closure c) { api("GET", params, c) }
+  void httpPut(Map params, Closure c) { api("PUT", params, c) }
+  void httpDelete(Map params, Closure c) { api("DELETE", params, c) }
+  private void api(String verb, Map params, Closure c) {
+    apiCalls++
+    apiLog << [verb: verb, uri: params.uri.toString(), body: params.body]
+    c([status: 200, data: next(apiAnswers)])
+  }
 }''')
 def shell = new GroovyShell(gcl, new Binding(), new CompilerConfiguration(scriptBaseClass: 'HubStub'))
 File dir = new File(args[0])
@@ -296,6 +316,374 @@ test("health: an unreachable module from the API ends up offline") {
   def d = driver("OutdoorModule")
   d.updatedFromParent(n["netatmo:STATION:OUTDOOR"])
   [d.attrs.healthStatus == "offline", d.attrs.healthStatus]
+}
+
+// ── Rate limits: Netatmo's "too many requests" is not a token problem ────
+
+def httpError = { int status, Object data = null, Map headers = [:] ->
+  gcl.loadClass("FakeHttpError").newInstance(status, data, headers)
+}
+def usageReached = { httpError(403, [error: [code: 26, message: "Maximum usage reached"]]) }
+
+test("limit: 403 with code 26 doesn't renew the token or retry") {
+  def a = validApp()
+  a.apiAnswers << usageReached()
+  Map r = a.apiRequest("GET", "/api/getstationsdata")
+  [!r.success && a.tokenCalls == 0 && a.apiCalls == 1 && a.atomicState.netatmoRefreshToken == "OLD-REFRESH", [r, a.tokenCalls, a.apiCalls]]
+}
+
+test("limit: a JSON-text error body is read too") {
+  def a = validApp()
+  a.apiAnswers << httpError(403, '{"error":{"code":26}}')
+  a.apiRequest("GET", "/api/getstationsdata")
+  [a.tokenCalls == 0 && a.apiCalls == 1, [a.tokenCalls, a.apiCalls]]
+}
+
+test("limit: HTTP 429 honours Retry-After") {
+  def a = validApp()
+  a.apiAnswers << httpError(429, null, ["Retry-After": [value: "120"]])
+  a.apiRequest("GET", "/api/getstationsdata")
+  [a.atomicState.netatmoRateLimitedUntil == a.clock + 120000L, a.atomicState]
+}
+
+test("limit: a very long Retry-After is capped at an hour") {
+  def a = validApp()
+  a.apiAnswers << httpError(429, null, ["Retry-After": [value: "86400"]])
+  a.apiRequest("GET", "/api/getstationsdata")
+  [a.atomicState.netatmoRateLimitedUntil == a.clock + 3600000L, a.atomicState]
+}
+
+test("limit: polls wait out the backoff without calling Netatmo, then resume") {
+  def a = validApp(selectedDeviceDnis: ["netatmo:STATION:STATION"])
+  a.apiAnswers << usageReached()
+  a.poll()
+  String first = a.state.lastPollStatus
+  int callsAfterHit = a.apiCalls
+  a.advance(300000L)
+  a.poll()
+  String waiting = a.state.lastPollStatus
+  int callsWhileWaiting = a.apiCalls
+  a.advance(15 * 60000L)
+  a.apiAnswers << stations
+  a.poll()
+  [first == "Waiting" && waiting == "Waiting" && callsWhileWaiting == callsAfterHit && a.state.lastPollStatus == "OK" && a.state.netatmoAuthenticated == true,
+   [first, waiting, callsAfterHit, callsWhileWaiting, a.state.lastPollStatus]]
+}
+
+test("limit: hitting the limit doesn't sign the hub out or log an error") {
+  def a = validApp(selectedDeviceDnis: ["netatmo:STATION:STATION"])
+  a.apiAnswers << usageReached()
+  a.poll()
+  [a.state.netatmoAuthenticated == true && !a.logs.any { it.startsWith("error") }, a.logs]
+}
+
+test("limit: 403 'operation forbidden' (code 13) isn't treated as a bad token") {
+  def a = validApp()
+  a.apiAnswers << httpError(403, [error: [code: 13]])
+  Map r = a.apiRequest("GET", "/api/getstationsdata")
+  [!r.success && a.tokenCalls == 0 && a.apiCalls == 1, [a.tokenCalls, a.apiCalls]]
+}
+
+test("limit: 403 'access token expired' (code 3) still renews and retries") {
+  def a = validApp()
+  a.apiAnswers << httpError(403, [error: [code: 3]]) << stations
+  a.tokenAnswers << newTokens
+  Map r = a.apiRequest("GET", "/api/getstationsdata")
+  [r.success && a.tokenCalls == 1, [r, a.tokenCalls]]
+}
+
+// ── Fewer calls: a rule refreshing several devices makes one ─────────────
+
+test("cache: refreshing several children together reads Netatmo once") {
+  def a = validApp()
+  a.apiAnswers << stations
+  ["netatmo:STATION:STATION", "netatmo:STATION:OUTDOOR", "netatmo:STATION:STATION"].each { a.refreshChild(it) }
+  [a.apiCalls == 1, a.apiCalls]
+}
+
+test("cache: a refresh a minute later reads Netatmo again") {
+  def a = validApp()
+  a.apiAnswers << stations << stations
+  a.refreshChild("netatmo:STATION:STATION")
+  a.advance(61000L)
+  a.refreshChild("netatmo:STATION:STATION")
+  [a.apiCalls == 2, a.apiCalls]
+}
+
+test("cache: saving settings drops it, so new units apply on the next refresh") {
+  def a = validApp()
+  a.apiAnswers << stations << stations
+  a.refreshChild("netatmo:STATION:STATION")
+  a.initialize()
+  a.refreshChild("netatmo:STATION:STATION")
+  [a.apiCalls == 2, a.apiCalls]
+}
+
+test("cache: scheduled polls always read fresh data") {
+  def a = validApp(selectedDeviceDnis: ["netatmo:STATION:STATION"])
+  a.apiAnswers << stations << stations
+  a.refreshChild("netatmo:STATION:STATION")
+  a.poll()
+  [a.apiCalls == 2, a.apiCalls]
+}
+
+// ── Webhooks: the endpoint ───────────────────────────────────────────────
+
+def SECRET = "SECRET-PLACEHOLDER"
+def sign = { String body, String secret = SECRET ->
+  def mac = javax.crypto.Mac.getInstance("HmacSHA256")
+  mac.init(new javax.crypto.spec.SecretKeySpec(secret.getBytes("UTF-8"), "HmacSHA256"))
+  mac.doFinal(body.getBytes("UTF-8")).encodeHex().toString()
+}
+def hookApp = { Map settings = [:] ->
+  def a = validApp([useWebhooks: true, selectedDeviceDnis: ["netatmo:STATION:STATION"]] + settings)
+  a.atomicState.webhookRegistered = true
+  a
+}
+def deliver = { a, Map payload, Map headers = null ->
+  String body = groovy.json.JsonOutput.toJson(payload)
+  a.receive([body: body, headers: headers != null ? headers : ["X-Netatmo-secret": sign(body)]])
+  a.webhookEvent()
+}
+def deviceEvent = [push_type: "device_event", user_id: "USER-1", device_id: "01:23:45:67:89:ab", home_id: "HOME-1", home_name: "Private Home",
+  extra_params: [sequence_id: 7, modules: [[id: "02:23:45:67:89:ab", type: "NAModule1", name: "Garden", reachable: true, temperature: 21.5]]]]
+
+test("hook: the signature matches an independently computed HMAC-SHA256") {
+  def a = hookApp()
+  // printf '%s' '{"push_type":"device_event","home_name":"Café"}' | openssl dgst -sha256 -hmac SECRET-PLACEHOLDER
+  String known = "1345a522dfbc5cb547d482bbb7d30434d865642c7a387d85a19952276e11271b"
+  String body = '{"push_type":"device_event","home_name":"Café"}'
+  [a.webhookSignatureValid(body, known) && !a.webhookSignatureValid(body + " ", known), "signature"]
+}
+
+test("hook: a bad signature gets 401 and does nothing") {
+  def a = hookApp()
+  def r = deliver(a, deviceEvent, ["X-Netatmo-secret": sign("something else")])
+  [r.status == 401 && !a.scheduled && !a.atomicState.webhookLastEventAt && a.atomicState.webhookRejectedCount == 1, [r, a.atomicState]]
+}
+
+test("hook: a signature made with another secret gets 401") {
+  def a = hookApp()
+  String body = groovy.json.JsonOutput.toJson(deviceEvent)
+  def r = deliver(a, deviceEvent, ["X-Netatmo-secret": sign(body, "ANOTHER-SECRET")])
+  [r.status == 401, r]
+}
+
+test("hook: a missing signature gets 401") {
+  def a = hookApp()
+  def r = deliver(a, deviceEvent, [:])
+  [r.status == 401 && !a.scheduled, r]
+}
+
+test("hook: header names and uppercase hex are matched case-insensitively") {
+  def a = hookApp()
+  String body = groovy.json.JsonOutput.toJson(deviceEvent)
+  def r = deliver(a, deviceEvent, ["x-netatmo-secret": [sign(body).toUpperCase()]])
+  [r.status == 200 && a.scheduled.size() == 1, [r, a.scheduled]]
+}
+
+test("hook: a signed device event answers 200 and schedules one read") {
+  def a = hookApp()
+  def r = deliver(a, deviceEvent)
+  [r.status == 200 && a.scheduled == [[seconds: 10, handler: "webhookRefresh"]] && a.apiCalls == 0, [r, a.scheduled, a.apiCalls]]
+}
+
+test("hook: repeats and bursts share the one pending read") {
+  def a = hookApp()
+  3.times { deliver(a, deviceEvent); a.advance(1000L) }
+  [a.scheduled.size() == 1, a.scheduled]
+}
+
+test("hook: the next read keeps its distance from the previous one") {
+  def a = hookApp()
+  a.apiAnswers << stations
+  deliver(a, deviceEvent)
+  a.advance(10000L)
+  a.webhookRefresh()
+  a.scheduled.clear()
+  a.advance(60000L)
+  deliver(a, deviceEvent)
+  [a.scheduled == [[seconds: 240, handler: "webhookRefresh"]] && a.apiCalls == 1, a.scheduled]
+}
+
+test("hook: the wake-up read updates through the normal poll path") {
+  def a = hookApp()
+  a.apiAnswers << stations
+  deliver(a, deviceEvent)
+  a.webhookRefresh()
+  [a.apiCalls == 1 && a.state.lastPollStatus == "OK" && !a.atomicState.webhookRefreshDueAt, [a.apiCalls, a.state.lastPollStatus]]
+}
+
+test("hook: nonsense from a signed sender still answers 200") {
+  def a = hookApp()
+  String body = "not json"
+  a.receive([body: body, headers: ["X-Netatmo-secret": sign(body)]])
+  def r = a.webhookEvent()
+  [r.status == 200 && !a.scheduled, r]
+}
+
+test("hook: switched off, events answer 200 and do nothing") {
+  def a = hookApp(useWebhooks: false)
+  def r = deliver(a, deviceEvent)
+  [r.status == 200 && !a.scheduled && !a.atomicState.webhookLastEventAt, r]
+}
+
+test("hook: webhook_deletion marks it unregistered, so polling takes over") {
+  def a = hookApp()
+  deliver(a, [push_type: "webhook_deletion", user_id: "USER-1"])
+  [a.atomicState.webhookRegistered == false && !a.webhooksCoverPolling(), a.atomicState]
+}
+
+test("hook: the saved sample hides names, IDs and MAC addresses but keeps readings") {
+  def a = hookApp()
+  deliver(a, deviceEvent)
+  String json = a.atomicState.webhookLastPayload.json
+  boolean hidden = !["USER-1", "HOME-1", "Private Home", "01:23:45", "02:23:45", "Garden"].any { json.contains(it) }
+  [hidden && json.contains("temperature") && json.contains("21.5") && json.contains("NAModule1"), json]
+}
+
+test("hook: the app's secret and the raw event never reach the logs") {
+  def a = hookApp()
+  deliver(a, deviceEvent)
+  deliver(a, deviceEvent, ["X-Netatmo-secret": "bad"])
+  [!a.logs.any { it.contains(SECRET) || it.contains("Private Home") || it.contains("ENDPOINT-TOKEN") }, a.logs]
+}
+
+// ── Webhooks: polling stands down only while they're arriving ────────────
+
+test("cover: scheduled polls stand down right after an event and a read") {
+  def a = hookApp()
+  a.apiAnswers << stations
+  deliver(a, deviceEvent)
+  a.webhookRefresh()
+  int calls = a.apiCalls
+  a.advance(300000L)
+  a.poll()
+  [a.apiCalls == calls && a.state.lastPollStatus == "Webhooks active", [a.apiCalls, a.state.lastPollStatus]]
+}
+
+test("cover: polling resumes when webhooks go quiet for 30 minutes") {
+  def a = hookApp()
+  a.apiAnswers << stations << stations
+  deliver(a, deviceEvent)
+  a.webhookRefresh()
+  a.advance(31 * 60000L)
+  a.poll()
+  [a.apiCalls == 2 && a.state.lastPollStatus == "OK", [a.apiCalls, a.state.lastPollStatus]]
+}
+
+test("cover: polling continues as normal before the first event") {
+  def a = hookApp()
+  a.apiAnswers << stations
+  a.poll()
+  [a.apiCalls == 1 && a.state.lastPollStatus == "OK", a.state.lastPollStatus]
+}
+
+test("cover: Run poll now always reads, even while webhooks are active") {
+  def a = hookApp()
+  a.apiAnswers << stations << stations
+  deliver(a, deviceEvent)
+  a.webhookRefresh()
+  a.appButtonHandler("runPollNow")
+  [a.apiCalls == 2, a.apiCalls]
+}
+
+test("cover: with webhooks off, scheduled polling is unchanged") {
+  def a = validApp(selectedDeviceDnis: ["netatmo:STATION:STATION"])
+  a.apiAnswers << stations
+  a.poll()
+  [a.apiCalls == 1, a.apiCalls]
+}
+
+// ── Webhooks: registering and removing ───────────────────────────────────
+
+def HOOK_URL = "https://cloud.example/api/HUB/apps/1/webhook?access_token=ENDPOINT-TOKEN"
+def hooks = { List urls -> [status: "ok", body: urls.collect { [url: it] }] }
+
+test("register: turning it on adds this hub's address") {
+  def a = validApp(useWebhooks: true)
+  a.apiAnswers << hooks([]) << hooks([HOOK_URL])
+  a.syncWebhookRegistration()
+  def post = a.apiLog.find { it.verb == "POST" }
+  [a.atomicState.webhookRegistered == true && post.uri == "https://api.netatmo.com/webhooks/v1/" && post.body == [url: HOOK_URL], a.apiLog]
+}
+
+test("register: already on Netatmo's list, it isn't added twice") {
+  def a = validApp(useWebhooks: true)
+  a.apiAnswers << hooks([HOOK_URL])
+  a.syncWebhookRegistration()
+  [a.atomicState.webhookRegistered == true && !a.apiLog.any { it.verb == "POST" }, a.apiLog]
+}
+
+test("register: another hub's webhook is left in place") {
+  def a = validApp(useWebhooks: true)
+  a.apiAnswers << hooks(["https://other.example/hook"]) << hooks([])
+  a.syncWebhookRegistration()
+  [a.atomicState.webhookRegistered == true && !a.apiLog.any { it.verb in ["PUT", "DELETE"] }, a.apiLog]
+}
+
+test("register: a refusal is reported in plain language and polling carries on") {
+  [[403, "isn't allowed"], [409, "limit"], [400, "address"]].every { status, words ->
+    def a = validApp(useWebhooks: true)
+    a.apiAnswers << hooks([]) << httpError(status as int, [error: [code: 13]])
+    a.syncWebhookRegistration()
+    a.atomicState.webhookRegistered == false && a.webhookStatusText().contains(words as String) && !a.webhooksCoverPolling()
+  } ? [true, ""] : [false, "wrong message or state"]
+}
+
+test("register: the address with its token never reaches the logs") {
+  def a = validApp(useWebhooks: true)
+  a.apiAnswers << hooks([]) << 400
+  a.syncWebhookRegistration()
+  [!a.logs.any { it.contains("ENDPOINT-TOKEN") }, a.logs]
+}
+
+test("register: not authorized yet, it doesn't call Netatmo") {
+  def a = validApp(useWebhooks: true)
+  a.state.netatmoAuthenticated = false
+  a.syncWebhookRegistration()
+  [a.apiCalls == 0, a.apiCalls]
+}
+
+test("unregister: turning it off removes the webhook") {
+  def a = validApp(useWebhooks: false)
+  a.atomicState.webhookRegistered = true
+  a.apiAnswers << hooks([HOOK_URL]) << hooks([])
+  a.syncWebhookRegistration()
+  [a.atomicState.webhookRegistered == false && a.apiLog*.verb == ["GET", "DELETE"], a.apiLog]
+}
+
+test("unregister: another hub's webhook survives, never a delete-all") {
+  def a = validApp(useWebhooks: false)
+  a.atomicState.webhookRegistered = true
+  a.apiAnswers << hooks([HOOK_URL, "https://other.example/hook"]) << hooks(["https://other.example/hook"])
+  a.syncWebhookRegistration()
+  def put = a.apiLog.find { it.verb == "PUT" }
+  [a.atomicState.webhookRegistered == false && put.body == [[url: "https://other.example/hook"]] && !a.apiLog.any { it.verb == "DELETE" }, a.apiLog]
+}
+
+test("unregister: uninstalling removes the webhook") {
+  def a = validApp(useWebhooks: true)
+  a.atomicState.webhookRegistered = true
+  a.apiAnswers << hooks([HOOK_URL]) << hooks([])
+  a.uninstalled()
+  [a.apiLog*.verb == ["GET", "DELETE"], a.apiLog]
+}
+
+test("unregister: a failure while uninstalling doesn't stop the uninstall") {
+  def a = validApp(useWebhooks: true)
+  a.atomicState.webhookRegistered = true
+  a.apiAnswers << 500
+  a.uninstalled()
+  [true, ""]
+}
+
+test("save: Done schedules the registration; left off, it never touches webhooks") {
+  def on = validApp(useWebhooks: true)
+  on.initialize()
+  def off = validApp()
+  off.initialize()
+  [on.scheduled.any { it.handler == "syncWebhookRegistration" } && !off.scheduled.any { it.handler == "syncWebhookRegistration" }, [on.scheduled, off.scheduled]]
 }
 
 println(ran == 0 ? "no tests match '$filter'" : failures ? "$failures of $ran FAILED" : "all $ran passed")

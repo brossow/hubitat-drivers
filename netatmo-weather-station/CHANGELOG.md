@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] - Unreleased
+
+Netatmo plans to reduce API rate limits for polling-based integrations from 1 March 2027 and is encouraging a move to webhooks. It hasn't published the new numbers yet, and existing integrations keep working until then.
+
+Fixed:
+
+- **Reaching Netatmo's API limit was treated as a bad token.** Netatmo reports "maximum usage reached" with HTTP 403 and error code 26, and the integration answered every 403 by renewing the token and retrying, which only used more of the allowance. Now that answer, and HTTP 429, make it stop calling Netatmo for as long as `Retry-After` says (at most an hour), or 15 minutes if it doesn't say, and carry on by itself. You stay authorized, and the Polling section shows when requests resume. Other 403 answers that a new token can't fix no longer renew it either.
+
+Changed:
+
+- A rule refreshing several devices together now makes one Netatmo request rather than one per device. A device refresh within 60 seconds of the last read uses that read. Scheduled polls and **Run poll now** always read fresh data.
+- The Polling section now says that Netatmo updates this data about every 10 minutes, so polling faster doesn't get newer values.
+
+Added:
+
+- **Webhooks (beta), off by default.** With **Receive webhooks from Netatmo** turned on, the integration registers with Netatmo's new webhook service. Each webhook's signature is checked, and a valid one prompts a read of your station data, at most once every 5 minutes. Scheduled polls stand down while webhooks are arriving and resume if none has arrived for 30 minutes. Netatmo doesn't document what a weather webhook contains, so the readings still come from the same place as polling, and the page shows the latest webhook with names and IDs hidden.
+
 ## [0.5.0] - 2026-10-10
 
 Renamed:

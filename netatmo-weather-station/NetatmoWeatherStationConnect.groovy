@@ -1,6 +1,6 @@
 /*
  * Netatmo Weather Station - Hubitat App
- * Version: 0.6.0
+ * Version: 0.6.1
  *
  * Copyright 2026 Brent Rossow
  * SPDX-License-Identifier: Apache-2.0
@@ -50,7 +50,7 @@ mappings {
     path("/webhook") { action: [POST: "webhookEvent"] }
 }
 
-private String appVersion() { return "0.6.0" }
+private String appVersion() { return "0.6.1" }
 private String netatmoApiBaseUrl() { return "https://api.netatmo.com" }
 private String netatmoAuthorizePath() { return "/oauth2/authorize" }
 private String netatmoTokenPath() { return "/oauth2/token" }
@@ -63,7 +63,7 @@ private Long childRefreshCacheMs() { return 60000L }
 // update is plenty however many events arrive.
 private Long webhookMinFetchSpacingMs() { return 5 * 60000L }
 private Long webhookFirstFetchDelayMs() { return 10000L }
-// Scheduled polls stand down only while events have been arriving this recently.
+// Scheduled polls stand down only while device events have been arriving this recently.
 private Long webhookCoverageWindowMs() { return 30 * 60000L }
 
 def installed() {
@@ -963,7 +963,7 @@ void poll() {
     if (webhooksCoverPolling()) {
         state.lastPollAt = now()
         state.lastPollStatus = "Webhooks active"
-        state.lastPollMessage = "Scheduled poll not needed: the latest webhook arrived ${formatTimestamp(atomicState.webhookLastEventAt)}."
+        state.lastPollMessage = "Scheduled poll not needed: the latest device webhook arrived ${formatTimestamp(atomicState.webhookLastDeviceEventAt)}."
         debugLog "Netatmo scheduled poll skipped: webhooks are arriving"
         return
     }
@@ -2146,6 +2146,7 @@ private void handleWebhookPayload(Map payload) {
             log.warn "Netatmo reports the webhook was removed; polling continues"
             break
         case "device_event":
+            atomicState.webhookLastDeviceEventAt = now()
             scheduleWebhookRefresh()
             break
         default:
@@ -2178,7 +2179,9 @@ private Boolean webhooksCoverPolling() {
         return false
     }
 
-    Long lastEvent = safeLong(atomicState.webhookLastEventAt)
+    // Only device events prompt reads. Netatmo also sends webhook_activation when the
+    // webhook is registered, and that says nothing about future readings.
+    Long lastEvent = safeLong(atomicState.webhookLastDeviceEventAt)
     Long lastFetch = safeLong(atomicState.lastStationFetchAt)
     return lastEvent != null && lastFetch != null &&
         now() - lastEvent < webhookCoverageWindowMs() && now() - lastFetch < webhookCoverageWindowMs()

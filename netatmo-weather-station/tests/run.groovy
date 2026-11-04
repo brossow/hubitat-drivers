@@ -562,6 +562,26 @@ test("cover: scheduled polls stand down right after an event and a read") {
   [a.apiCalls == calls && a.state.lastPollStatus == "Webhooks active", [a.apiCalls, a.state.lastPollStatus]]
 }
 
+test("cover: webhook_activation alone doesn't stand scheduled polls down") {
+  def a = hookApp()
+  a.apiAnswers << stations << stations
+  a.poll()                                 // a read just before registering
+  deliver(a, [push_type: "webhook_activation", user_id: "USER-1"])
+  a.advance(300000L)
+  a.poll()
+  [a.apiCalls == 2 && a.state.lastPollStatus == "OK", [a.apiCalls, a.state.lastPollStatus]]
+}
+
+test("cover: other event types don't stand scheduled polls down either") {
+  def a = hookApp()
+  a.apiAnswers << stations << stations
+  a.poll()
+  deliver(a, [push_type: "topology_changed", user_id: "USER-1"])
+  a.advance(300000L)
+  a.poll()
+  [a.apiCalls == 2 && !a.scheduled, [a.apiCalls, a.scheduled]]
+}
+
 test("cover: polling resumes when webhooks go quiet for 30 minutes") {
   def a = hookApp()
   a.apiAnswers << stations << stations

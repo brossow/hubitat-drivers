@@ -149,6 +149,8 @@ Use **Run poll now** to verify the data path immediately after changing the poll
 
 Netatmo announced on 4 November 2026 that it plans to reduce API rate limits for polling-based integrations from 1 March 2027, and it encourages moving to webhooks. It hasn't published the new numbers yet. Weather stations are supported.
 
+This feature hasn't yet been run against Netatmo's live service, so treat it as a trial. If it doesn't work, polling carries on as usual, and reports in the community thread are welcome.
+
 Webhooks are off unless you turn them on. To try them, turn on **Receive webhooks from Netatmo** in the **Webhooks (beta)** section and click **Done**. The integration registers the hub's cloud address with Netatmo, and the section shows whether that worked and when the latest webhook arrived. Turning the option off and clicking **Done**, or removing the integration, removes the registration.
 
 How it works:

@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-11-04
 
 Netatmo plans to reduce API rate limits for polling-based integrations from 1 March 2027 and is encouraging a move to webhooks. It hasn't published the new numbers yet, and existing integrations keep working until then.
 
@@ -16,6 +16,8 @@ Changed:
 Added:
 
 - **Webhooks (beta), off by default.** With **Receive webhooks from Netatmo** turned on, the integration registers with Netatmo's new webhook service. Each webhook's signature is checked, and a valid one prompts a read of your station data, at most once every 5 minutes. Scheduled polls stand down while webhooks are arriving and resume if none has arrived for 30 minutes. Netatmo doesn't document what a weather webhook contains, so the readings still come from the same place as polling, and the page shows the latest webhook with names and IDs hidden.
+
+Testing: this release was checked with the off-hub tests, not on a hub. Webhooks haven't yet run against Netatmo's live service, so whether Netatmo accepts the hub's address and how often events arrive are still unconfirmed. Polling is unaffected if they don't work.
 
 ## [0.5.0] - 2026-10-10
 

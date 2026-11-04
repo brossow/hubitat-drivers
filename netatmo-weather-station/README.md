@@ -149,15 +149,15 @@ Use **Run poll now** to verify the data path immediately after changing the poll
 
 Netatmo announced on 4 November 2026 that it plans to reduce API rate limits for polling-based integrations from 1 March 2027, and it encourages moving to webhooks. It hasn't published the new numbers yet. Weather stations are supported.
 
-This feature hasn't yet been run against Netatmo's live service, so treat it as a trial. If it doesn't work, polling carries on as usual, and reports in the community thread are welcome.
+Treat this as a trial. On a real hub, registering, signature checks and removal all work, and Netatmo's activation event arrives. Device events are the ones that would replace polling, and none had arrived in the first test even though the station was reporting, so for now polling may still be doing the work. If that's what you see too, nothing is wrong, and reports in the community thread are welcome.
 
 Webhooks are off unless you turn them on. To try them, turn on **Receive webhooks from Netatmo** in the **Webhooks (beta)** section and click **Done**. The integration registers the hub's cloud address with Netatmo, and the section shows whether that worked and when the latest webhook arrived. Turning the option off and clicking **Done**, or removing the integration, removes the registration.
 
 How it works:
 
 - Each webhook is checked against the signature Netatmo sends, made with your Client Secret. Anything that doesn't match is rejected and counted in the **Webhooks (beta)** section.
-- A webhook prompts the integration to read your station data straight away, at most once every 5 minutes. Netatmo doesn't document what a weather webhook contains, so the readings still come from the same place as polling.
-- Scheduled polls stand down while webhooks are arriving, and pick up again by themselves if none has arrived for 30 minutes. Netatmo doesn't keep events it couldn't deliver, so polling stays configured as the safety net. **Run poll now** and device refreshes still work as usual.
+- A device webhook prompts the integration to read your station data straight away, at most once every 5 minutes. Netatmo doesn't document what a weather webhook contains, so the readings still come from the same place as polling.
+- Scheduled polls stand down while device webhooks are arriving, and pick up again by themselves if none has arrived for 30 minutes. Netatmo's other events, such as the one confirming registration, don't affect polling. Netatmo doesn't keep events it couldn't deliver, so polling stays configured as the safety net. **Run poll now** and device refreshes still work as usual.
 - The section shows the latest webhook with names, IDs and addresses hidden, so it can be checked or shared when troubleshooting.
 
 Webhooks need Netatmo to reach your hub through Hubitat's cloud, so they don't arrive while the hub or its internet connection is down. The address includes the access token for this app's endpoint, and it's sent only to Netatmo.

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1] - 2026-11-04
+
+Fixed:
+
+- **Turning on webhooks paused scheduled polling for about 35 minutes.** The event Netatmo sends to confirm registration counted as webhooks arriving, so polls stood down and devices stopped updating until the 30-minute fallback ran. Only device events stand polls down now.
+
+Testing: installed and checked on a real hub. Registering, removing and signature checks all work, and scheduled polls keep reading after turning webhooks on. No device event had arrived from Netatmo during that test, even though the station was reporting, so webhooks remain a trial and polling may still be doing the work.
+
 ## [0.6.0] - 2026-11-04
 
 Netatmo plans to reduce API rate limits for polling-based integrations from 1 March 2027 and is encouraging a move to webhooks. It hasn't published the new numbers yet, and existing integrations keep working until then.

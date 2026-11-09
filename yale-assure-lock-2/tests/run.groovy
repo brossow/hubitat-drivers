@@ -425,11 +425,18 @@ test("maxCodes follows the lock's slot count, capped at 250") {
   [values(d, 'maxCodes') == [250, 30], values(d, 'maxCodes')]
 }
 
-test("refresh asks for lock state, battery and the DoorSense door state") {
+test("refresh asks for lock state and battery") {
   def d = fresh()
   d.refresh()
-  def ng = d.sent.find { it.name == 'notificationGet' }
-  [d.sent*.name.containsAll(['doorLockOperationGet', 'batteryGet']) && ng?.args?.notificationType == 6 && ng?.args?.event == 0x16, d.sent]
+  [d.sent*.name.containsAll(['doorLockOperationGet', 'batteryGet']), d.sent]
+}
+
+// On a real Assure 2 (ZW3, Z-Wave JS) a door-state get came back as event 0 with no
+// parameters, which 1.08-dev logged as "Unknown event 0" at info.
+test("an idle (event 0) notification changes nothing and isn't logged at info") {
+  def d = fresh(txtEnable: true)
+  d.zwaveEvent(NR(event: 0, eventParameter: []))
+  [d.events.isEmpty() && !d.logs.any { it[0] == "info" }, [d.events, d.logs]]
 }
 
 test("supervised reports are unwrapped and handled") {

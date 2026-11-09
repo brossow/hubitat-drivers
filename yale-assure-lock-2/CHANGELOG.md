@@ -13,7 +13,6 @@ Versions before 1.08 are Sleuth255/Trunzoc's; see the [upstream repo](https://gi
 
 ### Added
 - **Encrypt stored lock codes** preference, on by default. Initialize re-saves existing codes in the chosen format.
-- Refresh asks for the DoorSense door state.
 - Handling for "all user codes deleted" (event 0x0C).
 - Debug and trace logging turn themselves off after 30 minutes.
 
@@ -32,6 +31,7 @@ Versions before 1.08 are Sleuth255/Trunzoc's; see the [upstream repo](https://gi
 ### Fixed
 - `setCodeLength` threw (it's part of the LockCodes capability). It now logs that length is set in the Yale Access app.
 - Initialize threw if the device had no `deviceId` data.
+- Idle notifications (event 0) are ignored instead of logged as "Unknown event 0".
 
 ### Removed
 - The AlarmReport handler. It was unreachable (notifications are parsed as v3) and called a method that didn't exist.

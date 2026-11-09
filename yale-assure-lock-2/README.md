@@ -14,7 +14,6 @@ Most of the fixes are for Hubitat's **Z-Wave JS** stack, which passes some lock 
 - **Codes are confirmed by the lock.** A code appears in Hubitat only once the lock confirms it. A code the lock rejects, for example a duplicate, reports `codeChanged: failed` instead of showing as active. Lock Code Manager can add or delete several codes at once.
 - **Fixed crashes:** changing the code in an occupied slot, `setCodeLength`, and Initialize on a device with no `deviceId`.
 - **Lock state is accurate.** A bolt in an unknown position reads `unknown`, not unlocked. "Did not fully lock" is reported as that, not as a jam.
-- **Refresh asks for the door state,** so `contact` doesn't stay blank until the door moves.
 - **Logging:** debug logging is off by default, and debug and trace both turn themselves off after 30 minutes.
 
 The full list is in [CHANGELOG.md](CHANGELOG.md).
@@ -44,6 +43,7 @@ https://raw.githubusercontent.com/brossow/hubitat-drivers/yale-assure-lock-2/yal
 
 - **On Z-Wave JS a fingerprint unlock reads as a keypad unlock.** The hub doesn't pass on the value that tells them apart. The user is still named if fingerprints are enrolled in the Yale Access app in the same order as the codes.
 - **Code length is set in the Yale Access app.** `setCodeLength` only logs a warning.
+- **The door state updates only when the door moves.** Asked for it, the lock answers with an empty notification (tested on a ZW3 lock on Z-Wave JS), so Refresh can't fill in `contact`.
 - **Hubitat logs command arguments.** Calling `setCode` from the device page records the PIN in the device's event history. That's the platform, not this driver.
 
 ## Tests

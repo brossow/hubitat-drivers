@@ -50,7 +50,7 @@ def getDriverVersion() { return "1.08" }	// **** DEVICE DRIVER VERSION.
  *            (keypad unlocks still always fire, for Rule Machine's "lock code entered")
  *          - an unlock from an unknown slot no longer reports "User null"
  *          - fingerprint unlocks keep the matched user's name
- *          - refresh asks for the door state; setCodeLength no longer throws
+ *          - setCodeLength no longer throws; idle (event 0) notifications are ignored quietly
  *          - maxCodes follows the lock's reported slot count (capped at 250)
  *          - debug logging defaults off and turns itself off after 30 minutes
  *          - removed the AlarmReport handler (unreachable, and it called a method that didn't exist)
@@ -302,6 +302,9 @@ def zwaveEvent(NotificationReport cmd) {
                 map.descriptionText = "${device.displayName} was ${cmd.event == 0x16 ? 'opened' : 'closed'}"
                 if (txtEnable && device.currentValue("contact") != map.value) log.info map.descriptionText
                 break
+            case 0x00: // Idle: carries no state (e.g. the answer to a notification get), so nothing to report
+                if (debugEnable) log.debug "Access Control idle notification"
+                return
             case 0xFE: // Keypad Unlock with Fingerprint
                 map.value = "unlocked"
                 map.type = "physical"
@@ -599,8 +602,8 @@ def refresh() {
     def cmds = []
     cmds << zwaveSecureEncap(zwave.doorLockV1.doorLockOperationGet())
     cmds << zwaveSecureEncap(zwave.batteryV1.batteryGet())
-    // DoorSense: ask for the Access Control door state, so contact is right without waiting for the door to move.
-    cmds << zwaveSecureEncap(zwave.notificationV3.notificationGet(notificationType: 0x06, v1AlarmType: 0, event: 0x16))
+    // No DoorSense request here: asked for the door state, the lock answers with an empty "idle"
+    // notification (event 0) on Z-Wave JS, so contact only updates when the door moves.
     sendHubCommand(new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZWAVE))
 }
 

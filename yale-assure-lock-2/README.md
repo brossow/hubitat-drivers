@@ -10,6 +10,7 @@ Most of the fixes are for Hubitat's **Z-Wave JS** stack, which passes some lock 
 
 - **Keypad unlocks name the user on Z-Wave JS.** 1.07 reported them as "User null", and Rule Machine's "lock code entered" trigger couldn't match anyone.
 - **Door open/close no longer fires 2–4 times.** Opening the door no longer reports a phantom lock either.
+- **A keypad unlock fires one event**, named with the user, not a bare "unlocked" followed by the named one. A code add or delete fires `codeChanged` once.
 - **Lock codes can be stored encrypted** (on by default), so PINs aren't on view on the device page or to apps that read device attributes. The driver's own logs mask PINs.
 - **Codes are confirmed by the lock.** A code appears in Hubitat only once the lock confirms it. A code the lock rejects, for example a duplicate, reports `codeChanged: failed` instead of showing as active. Lock Code Manager can add or delete several codes at once.
 - **Fixed crashes:** changing the code in an occupied slot, `setCodeLength`, and Initialize on a device with no `deviceId`.

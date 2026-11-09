@@ -18,7 +18,8 @@ Versions before 1.08 are Sleuth255/Trunzoc's; see the [upstream repo](https://gi
 
 ### Changed
 - Lock codes are recorded once the lock confirms them (code added/deleted notification or a read-back), not when `setCode` is called. Each pending change is read back once if the lock doesn't answer within 20 seconds, then reported as failed.
-- Pending changes are tracked per slot, so several codes can be added or deleted at once. This replaces `state.slotId`. Pending PINs are stored encrypted.
+- Pending changes are tracked per slot, so several codes can be added or deleted at once. This replaces `state.slotId`. Pending PINs are stored encrypted. They're kept in `atomicState`, and code bookkeeping runs one report at a time, because Z-Wave JS can deliver the same report twice at once.
+- A lock-state report that changes the lock is held for 2 seconds, in case the Access Control notification for the same operation follows it. On Z-Wave JS the report sometimes arrives first, and a keypad unlock fired a bare "unlocked" and then "unlocked by Alex via keypad". If no notification follows (a refresh, or a lost notification), the report is sent after the 2 seconds.
 - `codeChanged` uses the LockCodes capability's values (`added`, `changed`, `deleted`, `failed`), with the slot and name in the event data. 1.07 sent values like "2 updated".
 - A code rejected as a duplicate, a slot found empty after `setCode`, or a slot still occupied after `deleteCode` reports `codeChanged: failed`.
 - Lock and battery events are no longer forced as state changes, so repeats are dropped. Keypad unlocks still always fire, for Rule Machine's "lock code entered".
@@ -32,6 +33,7 @@ Versions before 1.08 are Sleuth255/Trunzoc's; see the [upstream repo](https://gi
 - `setCodeLength` threw (it's part of the LockCodes capability). It now logs that length is set in the Yale Access app.
 - Initialize threw if the device had no `deviceId` data.
 - Idle notifications (event 0) are ignored instead of logged as "Unknown event 0".
+- A code added or deleted fired `codeChanged` twice when Z-Wave JS delivered its report twice.
 
 ### Removed
 - The AlarmReport handler. It was unreachable (notifications are parsed as v3) and called a method that didn't exist.

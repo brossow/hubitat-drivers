@@ -50,6 +50,8 @@ def getDriverVersion() { return "1.08" }	// **** DEVICE DRIVER VERSION.
  *            (keypad unlocks still always fire, for Rule Machine's "lock code entered")
  *          - an unlock from an unknown slot no longer reports "User null"
  *          - fingerprint unlocks keep the matched user's name
+ *          - a keypad unlock fires one lock event, not a bare "unlocked" followed by the named one
+ *          - a code add or delete fires one codeChanged event when Z-Wave JS delivers its report twice
  *          - setCodeLength no longer throws; idle (event 0) notifications are ignored quietly
  *          - maxCodes follows the lock's reported slot count (capped at 250)
  *          - debug logging defaults off and turns itself off after 30 minutes
@@ -99,6 +101,19 @@ import hubitat.zwave.commands.doorlockv1.*
 import hubitat.zwave.commands.usercodev1.*
 import hubitat.zwave.commands.notificationv3.*
 import hubitat.zwave.commands.supervisionv1.*
+import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+
+// Z-Wave JS can deliver the same report twice in quick succession, and the hub runs the two
+// parse calls at the same time. Code bookkeeping runs under a per-device lock (and keeps its
+// pending list in atomicState) so the second copy sees what the first did.
+@Field static final ConcurrentHashMap<String, Semaphore> codeLocks = new ConcurrentHashMap<String, Semaphore>()
+// A lock-state report that would change the lock is held briefly, in case the Access Control
+// notification for the same operation (which says who or what did it) is right behind it.
+@Field static final ConcurrentHashMap<String, Map> heldLockReports = new ConcurrentHashMap<String, Map>()
+@Field static final int lockReportHoldMillis = 2000
 
 // Pending code changes wait this long for the lock before being read back once, then reported as failed.
 private static int getPendingTimeoutSeconds() { 20 }
@@ -187,12 +202,42 @@ def zwaveEvent(DoorLockOperationReport cmd) {
     // The Access Control notification that precedes this report already logged the operation in
     // detail, and Z-Wave JS also tends to deliver this report twice. So only log at info when this
     // report is what actually changes the lock state (e.g. the notification was lost in transit).
-    if (device.currentValue("lock") != map.value) {
-        if (txtEnable) log.info map.descriptionText
-    } else if (debugEnable) {
-        log.debug map.descriptionText
+    // On Z-Wave JS this report can arrive before the notification instead. Sending it straight away
+    // would fire a bare "unlocked" and then the notification's "unlocked by Alex via keypad",
+    // so a report that changes the lock is held for a moment and dropped if the notification comes.
+    if (device.currentValue("lock", true) != map.value) {
+        heldLockReports[deviceKey()] = map
+        runInMillis(lockReportHoldMillis, "releaseLockReport", [overwrite: true])
+    } else {
+        if (debugEnable) log.debug map.descriptionText
+        sendEvent(map)
     }
+}
+
+// The held lock-state report: no notification covered it (lost in transit, a refresh, or a stack
+// that doesn't send one), so report it now.
+def releaseLockReport() {
+    def map = heldLockReports.remove(deviceKey())
+    if (map == null) return
+    if (device.currentValue("lock", true) != map.value && txtEnable) log.info map.descriptionText
     sendEvent(map)
+}
+
+private String deviceKey() {
+    return (device?.id ?: device?.deviceNetworkId ?: "0").toString()
+}
+
+private void withCodeLock(Closure body) {
+    def key = deviceKey()
+    codeLocks.putIfAbsent(key, new Semaphore(1))
+    Semaphore lock = codeLocks[key]
+    // Don't stall a parse thread forever if something went badly wrong: after 10 s, carry on unlocked.
+    boolean held = lock.tryAcquire(10, TimeUnit.SECONDS)
+    try {
+        body()
+    } finally {
+        if (held) lock.release()
+    }
 }
 
 // The user slot in an Access Control notification.
@@ -277,19 +322,21 @@ def zwaveEvent(NotificationReport cmd) {
                 break
             case 0x0C: // All user codes deleted
                 if (txtEnable) log.info "${device.displayName} reports all user codes deleted"
-                def codes = loadLockCodes()
-                codes.keySet().collect().each { slot -> codeChangedEvent("deleted", slot, codes[slot].name) }
-                updateLockCodes([:])
-                state.remove("pendingCodes")
+                withCodeLock {
+                    def codes = loadLockCodes()
+                    codes.keySet().collect().each { slot -> codeChangedEvent("deleted", slot, codes[slot].name) }
+                    if (codes) updateLockCodes([:])
+                    savePendingCodes([:])
+                }
                 return
             case 0x0D: // Single user code deleted
-                confirmPending("delete", slotFromParams(cmd.eventParameter))
+                withCodeLock { confirmPending("delete", slotFromParams(cmd.eventParameter)) }
                 return
             case 0x0E: // New user code added
-                confirmPending("set", slotFromParams(cmd.eventParameter))
+                withCodeLock { confirmPending("set", slotFromParams(cmd.eventParameter)) }
                 return
             case 0x0F: // New user code not added due to duplicate code
-                rejectPending(slotFromParams(cmd.eventParameter), "duplicates a code already in the lock")
+                withCodeLock { rejectPending(slotFromParams(cmd.eventParameter), "duplicates a code already in the lock") }
                 return
             case 0x16: // Door Opened
             case 0x17: // Door Closed
@@ -317,7 +364,10 @@ def zwaveEvent(NotificationReport cmd) {
         }
         if (map.value) {
             // Lock events log here; contact events log in their own cases, and jams already warned.
-            if (map.name == "lock" && map.value != "unknown" && txtEnable) log.info map.descriptionText
+            if (map.name == "lock") {
+                heldLockReports.remove(deviceKey())   // this notification covers any held report
+                if (map.value != "unknown" && txtEnable) log.info map.descriptionText
+            }
             sendEvent(map)
         }
     }
@@ -325,24 +375,26 @@ def zwaveEvent(NotificationReport cmd) {
 
 // --- Lock Code Manager Integration ---
 //
-// setCode and deleteCode record what they asked for in state.pendingCodes, one entry per slot,
+// setCode and deleteCode record what they asked for in atomicState.pendingCodes, one entry per slot,
 // and lockCodes only changes once the lock confirms it: by notification (code added / deleted)
 // or by a User Code Report read back from the lock. A change the lock never confirms is read back
 // once, then reported as codeChanged "failed". Pending PINs are stored encrypted.
 
 private Map pendingCodes() {
-    return (state.pendingCodes ?: [:]) as Map
+    return (atomicState.pendingCodes ?: [:]) as Map
 }
 
 private void savePendingCodes(Map pending) {
-    if (pending) state.pendingCodes = pending
-    else state.remove("pendingCodes")
+    if (pending) atomicState.pendingCodes = pending
+    else atomicState.remove("pendingCodes")
 }
 
 private void addPending(slot, Map entry) {
-    def pending = pendingCodes()
-    pending[slot.toString()] = entry + [at: now(), retried: false]
-    savePendingCodes(pending)
+    withCodeLock {
+        def pending = pendingCodes()
+        pending[slot.toString()] = entry + [at: now(), retried: false]
+        savePendingCodes(pending)
+    }
     runIn(pendingTimeoutSeconds, "checkPendingCodes", [overwrite: true])
 }
 
@@ -388,6 +440,10 @@ private void rejectPending(Integer slot, String reason) {
 
 def checkPendingCodes() {
 	if (traceEnable) log.trace "checkPendingCodes()"
+    withCodeLock { checkPendingCodesLocked() }
+}
+
+private void checkPendingCodesLocked() {
     def pending = pendingCodes()
     if (!pending) return
     long cutoff = now() - pendingTimeoutSeconds * 1000L
@@ -444,6 +500,11 @@ private void requestCode(Integer slot) {
 
 def zwaveEvent(UserCodeReport cmd) {
 	if (traceEnable) log.trace "zwaveEvent(UserCodeReport cmd): slot ${cmd.userIdentifier} status ${cmd.userIdStatus}"
+    withCodeLock { userCodeReportLocked(cmd) }
+    return null
+}
+
+private void userCodeReportLocked(UserCodeReport cmd) {
     def slot = cmd.userIdentifier.toString()
     def pending = pendingCodes()
     def entry = pending[slot]
@@ -453,13 +514,13 @@ def zwaveEvent(UserCodeReport cmd) {
         // When adding a code, ZW3 has been observed to send 3 UCRs: full code, first digit, then full code again.
         // Usually this is fine since the last one takes, but sometimes it's dropped and we end up with the truncated version.
         // This ignores any truncated code -- safe since Yale lock codes are min 4 digits anyway.
-        if (!pin || pin.length() == 1) return null
+        if (!pin || pin.length() == 1) return
         if (entry?.op == "delete") {
             pending.remove(slot)
             savePendingCodes(pending)
             log.warn "${device.displayName}: slot ${slot} (${entry.name}) is still occupied after a delete"
             codeChangedEvent("failed", slot, entry.name)
-            return null
+            return
         }
         if (entry?.op == "set") {
             pending.remove(slot)
@@ -469,10 +530,10 @@ def zwaveEvent(UserCodeReport cmd) {
                 log.warn "${device.displayName}: slot ${slot} holds a different code than the one sent for ${entry.name}"
                 codeChangedEvent("failed", slot, entry.name)
                 applyReadBack(slot, pin)
-                return null
+                return
             }
             applySet(slot, entry.name, pin)
-            return null
+            return
         }
         applyReadBack(slot, pin)
     } else {
@@ -482,12 +543,12 @@ def zwaveEvent(UserCodeReport cmd) {
             if (entry.op == "set") {
                 log.warn "${device.displayName}: slot ${slot} is empty, so the code for ${entry.name} didn't take"
                 codeChangedEvent("failed", slot, entry.name)
-                return null
+                return
             }
         }
         if (loadLockCodes().containsKey(slot) || entry?.op == "delete") applyDelete(slot)
     }
-    return null
+    return
 }
 
 // A code the lock reports that we didn't ask for (set at the lock, or a read-back with nothing pending).
@@ -542,7 +603,7 @@ private String decryptPin(String stored) {
 }
 
 private Map loadLockCodes() {
-    def lockCodes = device.currentValue("lockCodes")
+    def lockCodes = device.currentValue("lockCodes", true)
     if (!lockCodes) return [:]
     def raw = lockCodes.toString()
     def json = raw.startsWith("{") ? raw : (decrypt(raw) ?: raw)
@@ -625,8 +686,10 @@ def initialize() {
     state.DriverVersion = getDriverVersion()
     state.remove("slotId")      // replaced by pendingCodes in 1.08
     state.remove("pendingDelete")
-    state.remove("pendingCodes")
+    state.remove("pendingCodes")    // kept in state by early 1.08 builds
+    atomicState.remove("pendingCodes")
     unschedule("checkPendingCodes")
+    heldLockReports.remove(deviceKey())
 
     //detect zwave module that's installed
     def firstChar = getZWaveDeviceId()?.take(1)

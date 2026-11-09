@@ -57,6 +57,7 @@ abstract class HubStub extends Script {
   Map attrs = [:]
   Map data = [deviceId: "17873"]
   Map state = [:]
+  Map atomicState = [:]
   List events = []
   List logs = []           // [level, message]
   List sent = []           // Sent commands, in order
@@ -74,6 +75,7 @@ abstract class HubStub extends Script {
   // Script properties assigned from outside land in the binding, so move the clock through a method.
   void advance(long ms) { clock += ms }
   void runIn(Number s, String h, Map o = [:]) { runIns[h] = s }
+  void runInMillis(Number ms, String h, Map o = [:]) { runIns[h] = ms / 1000 }
   void unschedule(String h = null) { if (h == null) runIns.clear() else runIns.remove(h) }
   def zwaveSecureEncap(c) { c }
   void sendHubCommand(a) { if (a.hasProperty('cmds')) sent.addAll(a.cmds) else sent << a.cmd }
@@ -83,8 +85,8 @@ abstract class HubStub extends Script {
   def parseJson(String s) { new groovy.json.JsonSlurper().parseText(s) }
   void setup() {
     def self = this
-    device = [displayName: "Test Lock",
-              currentValue: { String a -> self.attrs[a] },
+    device = [id: 85, displayName: "Test Lock",
+              currentValue: { String a, boolean skipCache = false -> self.attrs[a] },
               getDataValue: { String k -> self.data[k] },
               updateSetting: { String n, v -> self.updatedSettings[n] = v }]
   }
@@ -216,14 +218,41 @@ test("door open on Z-Wave JS does not report a phantom lock") {
 
 test("lock: doorLockMode 0xFE (bolt position unknown) is 'unknown', not unlocked") {
   def d = fresh()
-  d.zwaveEvent(DLR(0xFE))
+  d.zwaveEvent(DLR(0xFE)); d.releaseLockReport()
   [values(d, 'lock') == ["unknown"], values(d, 'lock')]
 }
 
 test("lock: doorLockMode 0xFF locked, 0x00 unlocked") {
   def d = fresh()
-  d.zwaveEvent(DLR(0xFF)); d.zwaveEvent(DLR(0x00))
+  d.zwaveEvent(DLR(0xFF)); d.releaseLockReport(); d.zwaveEvent(DLR(0x00)); d.releaseLockReport()
   [values(d, 'lock') == ["locked", "unlocked"], values(d, 'lock')]
+}
+
+// Hub test, Z-Wave JS: the lock-state report arrived 0.6 s before the keypad notification, so a
+// keypad unlock fired a bare "was unlocked" and then "unlocked by Test via keypad".
+test("lock: a keypad unlock right after the lock-state report fires once, with the user") {
+  def d = withCodes(fresh(), alex)
+  d.attrs.lock = "locked"
+  d.zwaveEvent(DLR(0x00))
+  boolean held = named(d, 'lock').isEmpty() && d.runIns.releaseLockReport != null
+  d.zwaveEvent(NR(event: 6, eventParameter: [1]))
+  d.releaseLockReport()
+  def locks = named(d, 'lock')
+  [held && locks.size() == 1 && locks[0].descriptionText.contains("Alex"), locks*.descriptionText]
+}
+
+test("lock: a lock-state report with no notification is still reported") {
+  def d = fresh()
+  d.attrs.lock = "locked"
+  d.zwaveEvent(DLR(0x00)); d.releaseLockReport()
+  [values(d, 'lock') == ["unlocked"], values(d, 'lock')]
+}
+
+test("lock: a lock-state report that changes nothing is not held") {
+  def d = fresh()
+  d.attrs.lock = "locked"
+  d.zwaveEvent(DLR(0xFF))
+  [d.runIns.releaseLockReport == null, d.runIns]
 }
 
 test("lock: 'not fully locked' is reported as that, not as a jam") {
@@ -253,7 +282,7 @@ test("setCode: Z-Wave JS 'code added' with no slot confirms the single pending c
   def d = fresh()
   d.setCode(2, "2222", "Sam")
   d.zwaveEvent(NR(event: 0x0E, eventParameter: []))
-  [codesOf(d)["2"]?.name == "Sam" && values(d, 'codeChanged') == ["added"] && !d.state.pendingCodes, [codesOf(d), d.state]]
+  [codesOf(d)["2"]?.name == "Sam" && values(d, 'codeChanged') == ["added"] && !d.atomicState.pendingCodes, [codesOf(d), d.atomicState]]
 }
 
 test("setCode: a duplicate-code notification reports 'failed' and stores nothing") {
@@ -276,7 +305,7 @@ test("setCode: no answer is read back once, then reported as 'failed'") {
   d.advance(21_000); d.checkPendingCodes()
   boolean readBack = codeGets(d) == [2] && !d.events.any { it.name == 'codeChanged' }
   d.advance(21_000); d.checkPendingCodes()
-  [readBack && values(d, 'codeChanged') == ["failed"] && !d.state.pendingCodes && codesOf(d).isEmpty(), [codeGets(d), values(d, 'codeChanged')]]
+  [readBack && values(d, 'codeChanged') == ["failed"] && !d.atomicState.pendingCodes && codesOf(d).isEmpty(), [codeGets(d), values(d, 'codeChanged')]]
 }
 
 test("setCode: the ZW3 truncated read-back (first digit only) is ignored") {
@@ -341,6 +370,21 @@ test("deleteCode: a slot still occupied after a delete reports 'failed' and keep
   [codesOf(d)["1"] && values(d, 'codeChanged') == ["failed"], [codesOf(d), values(d, 'codeChanged')]]
 }
 
+// Hub test, Z-Wave JS: "code added" and "code deleted" each arrived twice, and each fired codeChanged twice.
+test("setCode: a repeated 'code added' notification sends one 'added'") {
+  def d = fresh()
+  d.setCode(10, "4321", "Test")
+  d.zwaveEvent(NR(event: 0x0E, eventParameter: [])); d.zwaveEvent(NR(event: 0x0E, eventParameter: []))
+  [values(d, 'codeChanged') == ["added"], values(d, 'codeChanged')]
+}
+
+test("deleteCode: a repeated 'code deleted' notification sends one 'deleted'") {
+  def d = withCodes(fresh(), alex)
+  d.deleteCode(1)
+  d.zwaveEvent(NR(event: 0x0D, eventParameter: [])); d.zwaveEvent(NR(event: 0x0D, eventParameter: []))
+  [values(d, 'codeChanged') == ["deleted"] && codesOf(d).isEmpty(), values(d, 'codeChanged')]
+}
+
 test("codeChanged only uses the capability's values") {
   def d = withCodes(fresh(), alex)
   d.setCode(2, "2222", "Sam"); d.zwaveEvent(UCR(2, "2222"))
@@ -374,7 +418,7 @@ test("privacy: plain codes left by 1.07 still load, and initialize re-saves them
 test("privacy: a pending PIN is not kept in plain text in state") {
   def d = fresh()
   d.setCode(2, "2222", "Sam")
-  [!d.state.toString().contains("2222"), d.state]
+  [!(d.state.toString() + d.atomicState.toString()).contains("2222"), d.atomicState]
 }
 
 test("privacy: no PIN in the driver's logs, even with every log level on") {
@@ -442,7 +486,7 @@ test("an idle (event 0) notification changes nothing and isn't logged at info") 
 test("supervised reports are unwrapped and handled") {
   def d = fresh()
   def sg = cl('hubitat.zwave.commands.supervisionv1.SupervisionGet').newInstance(inner: DLR(0xFF))
-  d.zwaveEvent(sg)
+  d.zwaveEvent(sg); d.releaseLockReport()
   [values(d, 'lock') == ["locked"] && d.sent.any { it.toString().contains('supervisionReport') }, [d.events, d.sent]]
 }
 

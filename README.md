@@ -12,11 +12,12 @@ Device drivers for [Hubitat Elevation](https://hubitat.com) by [Brent Rossow](ht
 | [Netatmo Weather Station](netatmo-weather-station/) | Netatmo weather stations: base station, indoor and outdoor modules, rain and wind gauges |
 | [ReBLLED LED Controller](reblled/) | Status and control for ReBLLED, alternative firmware for the BLLED LED controller in Bambu Lab printers |
 | [Rheem EcoNet](rheem-econet/) | Rheem EcoNet thermostats and water heaters |
+| [Yale Assure Lock 2](yale-assure-lock-2/) *(in development)* | Z-Wave Yale Assure Lock 2 with DoorSense and Lock Code Manager. Fixes to Sleuth255's driver, mainly for Hubitat's Z-Wave JS stack, meant to go back upstream. Not in HPM |
 | [Xiaomi/Aqara Temperature & Humidity](xiaomi-aqara/) | Zigbee T&H sensors (WSDCGQ01LM, WSDCGQ11LM, Aqara T1, Keen Home) |
 
 ## Installation
 
-Each driver has its own README with an import URL for manual installation via **Drivers Code → New Driver → Import**, as well as a Hubitat Package Manager (HPM) listing.
+Each released driver has its own README with an import URL for manual installation via **Drivers Code → New Driver → Import**, as well as a Hubitat Package Manager (HPM) listing. Drivers marked unreleased or in development aren't in HPM.
 
 ## License
 
@@ -28,6 +29,6 @@ Tags follow the format `{driver}/v{version}` — for example, `birdweather/v1.2.
 
 ## Checks
 
-`tools/check-syntax.sh` parses every driver with Groovy 2.4, the version the hub runs, and GitHub Actions runs it on every push that touches a `.groovy` file. It needs only Java 8 or later. It catches files that wouldn't save on the hub, not runtime bugs. Bambu Lab Printer, BirdWeather PUC, Netatmo Weather Station, ReBLLED LED Controller, Rheem EcoNet and the Xiaomi/Aqara T&H driver also have off-hub tests (`tests/run.sh` in their folders) that check behaviour.
+`tools/check-syntax.sh` parses every driver with Groovy 2.4, the version the hub runs, and GitHub Actions runs it on every push that touches a `.groovy` file. It needs only Java 8 or later. It catches files that wouldn't save on the hub, not runtime bugs. Bambu Lab Printer, BirdWeather PUC, Netatmo Weather Station, ReBLLED LED Controller, Rheem EcoNet, the Xiaomi/Aqara T&H driver and Yale Assure Lock 2 also have off-hub tests (`tests/run.sh` in their folders) that check behaviour.
 
 <sub>If these drivers are useful to you, [donations](https://www.paypal.me/brossow) are welcome but never expected.</sub>

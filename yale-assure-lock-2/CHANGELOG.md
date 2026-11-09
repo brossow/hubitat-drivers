@@ -24,7 +24,6 @@ Versions before 1.08 are Sleuth255/Trunzoc's; see the [upstream repo](https://gi
 - A code rejected as a duplicate, a slot found empty after `setCode`, or a slot still occupied after `deleteCode` reports `codeChanged: failed`.
 - Lock and battery events are no longer forced as state changes, so repeats are dropped. Keypad unlocks still always fire, for Rule Machine's "lock code entered".
 - An unlock from a slot Hubitat doesn't know reports "unknown code N", not "User null".
-- Fingerprint unlocks keep the matched user's name ("unlocked by Alex via fingerprint").
 - "Not fully locked" events are reported as that, not as a jam.
 - `maxCodes` follows the lock's reported slot count, capped at 250.
 - Debug logging defaults to off. The driver's own logs mask PINs.

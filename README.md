@@ -12,12 +12,12 @@ Device drivers for [Hubitat Elevation](https://hubitat.com) by [Brent Rossow](ht
 | [Netatmo Weather Station](netatmo-weather-station/) | Netatmo weather stations: base station, indoor and outdoor modules, rain and wind gauges |
 | [ReBLLED LED Controller](reblled/) | Status and control for ReBLLED, alternative firmware for the BLLED LED controller in Bambu Lab printers |
 | [Rheem EcoNet](rheem-econet/) | Rheem EcoNet thermostats and water heaters |
-| [Yale Assure Lock 2](yale-assure-lock-2/) *(in development)* | Z-Wave Yale Assure Lock 2 with DoorSense and Lock Code Manager. Fixes to Sleuth255's driver, mainly for Hubitat's Z-Wave JS stack, meant to go back upstream. Not in HPM |
+| [Yale Assure Lock 2](yale-assure-lock-2/) *(offered upstream)* | Z-Wave Yale Assure Lock 2 with DoorSense and Lock Code Manager. Fixes to Sleuth255's driver, mainly for Hubitat's Z-Wave JS stack, meant to go back upstream. Not in HPM |
 | [Xiaomi/Aqara Temperature & Humidity](xiaomi-aqara/) | Zigbee T&H sensors (WSDCGQ01LM, WSDCGQ11LM, Aqara T1, Keen Home) |
 
 ## Installation
 
-Each released driver has its own README with an import URL for manual installation via **Drivers Code → New Driver → Import**, as well as a Hubitat Package Manager (HPM) listing. Drivers marked unreleased or in development aren't in HPM.
+Each released driver has its own README with an import URL for manual installation via **Drivers Code → New Driver → Import**, as well as a Hubitat Package Manager (HPM) listing. Drivers marked unreleased, in development or offered upstream aren't in HPM.
 
 ## License
 

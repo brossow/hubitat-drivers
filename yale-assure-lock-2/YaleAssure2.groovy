@@ -49,7 +49,6 @@ def getDriverVersion() { return "1.08" }	// **** DEVICE DRIVER VERSION.
  *          - lock and battery events no longer forced as state changes, so repeats are dropped
  *            (keypad unlocks still always fire, for Rule Machine's "lock code entered")
  *          - an unlock from an unknown slot no longer reports "User null"
- *          - fingerprint unlocks keep the matched user's name
  *          - a keypad unlock fires one lock event, not a bare "unlocked" followed by the named one
  *          - a code add or delete fires one codeChanged event when Z-Wave JS delivers its report twice
  *          - setCodeLength no longer throws; idle (event 0) notifications are ignored quietly
@@ -297,8 +296,14 @@ def zwaveEvent(NotificationReport cmd) {
                 // as event 0x06 with identical event parameters, only distinguishing them in the
                 // legacy v1 alarm type. Z-Wave JS doesn't pass the v1 alarm type through (it's always 0),
                 // so there both read as keypad.
-                def via = (cmd?.v1AlarmType == 0x91) ? "fingerprint" : "keypad"
-                map.descriptionText = "${device.displayName} unlocked by ${codeName} via ${via}"
+                if (cmd?.v1AlarmType == 0x91) {
+                    // A fingerprint's slot only matches a code's name if they were enrolled in the same
+                    // order, so don't guess a name: report "Fingerprint", as 1.07 does.
+                    map.descriptionText = "${device.displayName} unlocked by Fingerprint match"
+                    sendEvent(name: "lastCodeName", value: "Fingerprint", descriptionText: map.descriptionText)
+                    break
+                }
+                map.descriptionText = "${device.displayName} unlocked by ${codeName} via keypad"
                 if (slotId != null) map.data = [(slotId.toString()): [name: codeName]]
                 sendEvent(name: "lastCodeName", value: known || slotId == null ? codeName : "unknown code ${slotId}",
                           descriptionText: map.descriptionText)

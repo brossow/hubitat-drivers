@@ -163,10 +163,11 @@ test("unlock: a slot Hubitat doesn't know is reported as an unknown code") {
   [d.attrs.lastCodeName == "unknown code 3", d.attrs.lastCodeName]
 }
 
-test("unlock: a fingerprint unlock keeps the matched user's name") {
+test("unlock: a fingerprint unlock (old stack) reports 'Fingerprint', not a guessed name") {
   def d = withCodes(fresh(), alex)
   d.zwaveEvent(NR(event: 6, eventParameter: [0x63, 0x03, 1, 1, 0x31], v1AlarmType: 0x91))
-  [d.attrs.lastCodeName == "Alex" && named(d, 'lock')[0].descriptionText.contains("fingerprint"), named(d, 'lock')[0].descriptionText]
+  def lock = named(d, 'lock')[0]
+  [d.attrs.lastCodeName == "Fingerprint" && lock.value == "unlocked" && lock.descriptionText.contains("Fingerprint") && !lock.data, lock]
 }
 
 test("unlock: every keypad unlock fires, even when already unlocked") {

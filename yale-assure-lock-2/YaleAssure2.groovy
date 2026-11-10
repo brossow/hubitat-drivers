@@ -303,10 +303,10 @@ def zwaveEvent(NotificationReport cmd) {
                     sendEvent(name: "lastCodeName", value: "Fingerprint", descriptionText: map.descriptionText)
                     break
                 }
-                map.descriptionText = "${device.displayName} unlocked by ${codeName} via keypad"
+                def label = known || slotId == null ? codeName : "unknown code ${slotId}"
+                map.descriptionText = "${device.displayName} unlocked by ${label} via keypad"
                 if (slotId != null) map.data = [(slotId.toString()): [name: codeName]]
-                sendEvent(name: "lastCodeName", value: known || slotId == null ? codeName : "unknown code ${slotId}",
-                          descriptionText: map.descriptionText)
+                sendEvent(name: "lastCodeName", value: label, descriptionText: map.descriptionText)
                 break
             case 0x07: // Manual Not Fully Locked
             case 0x08: // RF/App Not Fully Locked

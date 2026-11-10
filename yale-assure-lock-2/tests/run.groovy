@@ -160,7 +160,8 @@ test("unlock: a slot with no parameters never reports 'User null'") {
 test("unlock: a slot Hubitat doesn't know is reported as an unknown code") {
   def d = withCodes(fresh(), alex)
   d.zwaveEvent(NR(event: 6, eventParameter: [3]))
-  [d.attrs.lastCodeName == "unknown code 3", d.attrs.lastCodeName]
+  def desc = named(d, 'lock')[0].descriptionText
+  [d.attrs.lastCodeName == "unknown code 3" && desc.contains("unknown code 3"), [d.attrs.lastCodeName, desc]]
 }
 
 test("unlock: a fingerprint unlock (old stack) reports 'Fingerprint', not a guessed name") {

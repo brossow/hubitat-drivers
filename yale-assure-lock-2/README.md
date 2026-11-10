@@ -55,4 +55,4 @@ https://raw.githubusercontent.com/brossow/hubitat-drivers/main/yale-assure-lock-
 
 ## Credits and license
 
-The original driver is by Trunzoc/Sleuth (sleuth255), with Z-Wave JS fixes by kdb-jc and further changes by Brent Rossow. Licensed under the [Apache License 2.0](LICENSE), as the original is.
+The original driver is by Trunzoc/Sleuth (sleuth255), with Z-Wave JS fixes by kdb-jc and further changes by brossow. Licensed under the [Apache License 2.0](LICENSE), as the original is.

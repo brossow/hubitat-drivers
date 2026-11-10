@@ -25,6 +25,8 @@ The full list is in [CHANGELOG.md](CHANGELOG.md).
 2. Replace the code with the raw file from this folder and **Save**. The name and namespace match upstream, so devices already using the driver pick it up. HPM will put 1.07 back if it updates the package.
 3. On each lock's device page, click **Initialize**. This clears 1.07's state and re-saves the stored codes in the chosen format.
 
+If you're moving a lock from another driver (such as Generic Z-Wave Lock), change **Type** on the Device Info tab and save, then click **Configure**. Check the **Preferences** tab afterwards: switching drivers can save "Encrypt stored lock codes" as off. Turn it on and click **Save**, which also runs Initialize. To switch back to another driver later, turn encryption off and save first, since other drivers can't read encrypted codes.
+
 Import URL:
 
 ```
